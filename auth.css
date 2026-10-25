@@ -1,0 +1,221 @@
+
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@500;600;700;800&display=swap');
+
+:root {
+    --green: #5b8121;
+    --dark-green: #405b18;
+    --orange: #e48e1e;
+    --cream: #f8f8f1;
+    --text: #26351f;
+    --muted: #7b8175;
+    --border: #e4e8dc;
+}
+
+* { box-sizing: border-box; }
+
+body {
+    margin: 0;
+    font-family: 'DM Sans', sans-serif;
+    color: var(--text);
+    background: var(--cream);
+}
+
+.auth-page {
+    min-height: 100vh;
+    display: grid;
+    grid-template-columns: 1.15fr .85fr;
+    background: white;
+}
+
+.auth-form-side {
+    padding: 45px clamp(24px, 7vw, 100px);
+    display: flex;
+    justify-content: center;
+    flex-direction: column;
+}
+
+.auth-brand {
+    text-decoration: none;
+    color: var(--dark-green);
+    font: 800 26px 'Manrope', sans-serif;
+    margin-bottom: 45px;
+}
+
+.auth-brand span { color: var(--green); }
+
+.auth-eyebrow {
+    color: var(--green);
+    background: #eff5e5;
+    border-radius: 30px;
+    padding: 8px 13px;
+    display: inline-block;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    width: fit-content;
+}
+
+.auth-form-side h1 {
+    font: 800 clamp(30px, 4vw, 43px) 'Manrope', sans-serif;
+    margin: 18px 0 8px;
+    color: var(--dark-green);
+}
+
+.auth-description {
+    color: var(--muted);
+    line-height: 1.7;
+    margin: 0 0 26px;
+}
+
+.auth-form {
+    width: 100%;
+    max-width: 440px;
+}
+
+.auth-field { margin-bottom: 18px; }
+
+.auth-field label {
+    display: block;
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 8px;
+}
+
+.auth-field input {
+    width: 100%;
+    border: 1px solid #d8ded0;
+    background: #fff;
+    border-radius: 11px;
+    padding: 14px 15px;
+    font: inherit;
+    outline: none;
+    transition: .2s;
+}
+
+.auth-field input:focus {
+    border-color: var(--green);
+    box-shadow: 0 0 0 4px #5b812118;
+}
+
+.auth-button {
+    border: 0;
+    width: 100%;
+    padding: 15px;
+    border-radius: 11px;
+    color: white;
+    background: var(--green);
+    font: 700 15px 'DM Sans', sans-serif;
+    cursor: pointer;
+    transition: .2s;
+}
+
+.auth-button:hover {
+    background: var(--dark-green);
+    transform: translateY(-1px);
+}
+
+.auth-switch {
+    margin-top: 22px;
+    color: var(--muted);
+    font-size: 14px;
+}
+
+.auth-switch a {
+    color: var(--green);
+    font-weight: 700;
+    text-decoration: none;
+}
+
+.auth-notice {
+    padding: 12px 14px;
+    margin-bottom: 18px;
+    border-radius: 10px;
+    font-size: 14px;
+    background: #fff1e5;
+    color: #874c0a;
+}
+
+.auth-notice.success {
+    background: #edf6e4;
+    color: var(--dark-green);
+}
+
+.auth-visual {
+    position: relative;
+    overflow: hidden;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: clamp(30px, 6vw, 85px);
+    color: white;
+    background:
+        radial-gradient(ellipse at 85% 15%, #91b84c 0, transparent 36%),
+        linear-gradient(145deg, #6e982e, var(--dark-green));
+}
+
+.auth-visual::before,
+.auth-visual::after {
+    content: "";
+    position: absolute;
+    border: 1px solid #ffffff22;
+    border-radius: 50%;
+    width: 340px;
+    height: 340px;
+    right: -100px;
+    top: -80px;
+}
+
+.auth-visual::after {
+    width: 240px;
+    height: 240px;
+    right: -35px;
+    top: -30px;
+}
+
+.auth-visual-content {
+    position: relative;
+    z-index: 1;
+    max-width: 460px;
+}
+
+.auth-visual .leaf-icon {
+    font-size: 55px;
+    margin-bottom: 35px;
+}
+
+.auth-visual .welcome-label {
+    display: inline-block;
+    background: var(--orange);
+    color: white;
+    padding: 8px 17px;
+    font-weight: 700;
+    margin-bottom: 20px;
+}
+
+.auth-visual h2 {
+    font: 800 clamp(35px, 5vw, 55px)/1.15 'Manrope', sans-serif;
+    margin: 0 0 20px;
+}
+
+.auth-visual p {
+    color: #f0f5e8;
+    line-height: 1.8;
+    max-width: 390px;
+}
+
+.auth-visual .visual-note {
+    margin-top: 45px;
+    font-size: 13px;
+    opacity: .8;
+}
+
+@media (max-width: 760px) {
+    .auth-page { grid-template-columns: 1fr; }
+    .auth-form-side { padding: 32px 24px 45px; }
+    .auth-brand { margin-bottom: 35px; }
+    .auth-visual { min-height: 300px; padding: 38px 28px; }
+    .auth-visual .leaf-icon { margin-bottom: 15px; font-size: 38px; }
+    .auth-visual h2 { font-size: 35px; }
+    .auth-visual .visual-note { margin-top: 20px; }
+}
