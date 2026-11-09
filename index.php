@@ -1,7 +1,5 @@
 <?php
-if (session_status() === PHP_SESSION_NONE) {
-    session_start();
-}
+require_once __DIR__ . '/session_bootstrap.php';
 
 $isUserLoggedIn = isset($_SESSION['user_id']);
 $isAdminLoggedIn = isset($_SESSION['admin_id']);
@@ -153,74 +151,63 @@ header{
 .auth-nav {
     display: flex;
     align-items: center;
-    justify-content: flex-end;
-    gap: 22px;
+    gap: 10px;
     flex-shrink: 0;
 }
 
-.auth-nav-profile {
-    display: inline-flex;
-    align-items: center;
-    gap: 9px;
-    color: var(--green-dark);
-    text-decoration: none;
-    font-size: 14px;
-    font-weight: 700;
-    white-space: nowrap;
-    transition: color 0.2s ease;
-}
-
-.auth-nav-profile i {
+.auth-nav-profile,
+.auth-nav-logout {
+    position: relative;
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    border: 1px solid var(--line);
+    background: #fff;
+    color: var(--green);
     display: grid;
     place-items: center;
-    width: 34px;
-    height: 34px;
-    border-radius: 50%;
-    background: var(--green-soft);
-    color: var(--green);
-    font-size: 15px;
+    transition: var(--ease);
+    box-shadow: var(--shadow-sm);
+    text-decoration: none;
+    font-size: 16px;
+    cursor: pointer;
+}
+
+.auth-nav-profile i,
+.auth-nav-logout i {
+    display: grid;
+    place-items: center;
+    font-size: 16px;
 }
 
 .auth-nav-profile:hover {
-    color: var(--green-light);
+    background: var(--green-soft);
+    border-color: var(--green);
+    color: var(--green);
+    transform: translateY(-1px);
 }
 
 .auth-nav-logout {
-    display: inline-flex;
-    align-items: center;
-    gap: 7px;
-    padding: 8px 0;
-    border: none;
-    background: transparent;
-    color: #64705b;
-    font-size: 14px;
-    font-weight: 700;
-    text-decoration: none;
-    white-space: nowrap;
-    transition: color 0.2s ease;
+    color: #64748b;
 }
 
 .auth-nav-logout:hover {
-    color: #b45309;
-}
-
-.auth-nav-logout i {
-    font-size: 13px;
+    background: #fef2f2;
+    border-color: #fca5a5;
+    color: #dc2626;
+    transform: translateY(-1px);
 }
 
 @media (max-width: 720px) {
     .auth-nav {
-        gap: 14px;
+        gap: 8px;
     }
 
     .auth-nav-profile,
     .auth-nav-logout {
-        font-size: 12px;
-    }
-
-    .auth-nav-profile i {
-        width: 30px;
-        height: 30px;
+        width: 38px;
+        height: 38px;
+        font-size: 14px;
     }
 }
 
@@ -330,7 +317,12 @@ header{
 .services-top{display:flex;justify-content:space-between;align-items:flex-end;gap:25px;margin-bottom:36px}
 .services-top .section-head{margin:0;text-align:left}
 .services-top .section-head h2{font-size:36px}
-.category-tabs{display:flex;gap:10px;flex-wrap:wrap}
+.service-controls{display:flex;flex-direction:column;align-items:flex-end;gap:14px;min-width:min(100%,430px)}
+.service-search{position:relative;width:min(100%,430px)}
+.service-search i{position:absolute;left:16px;top:50%;transform:translateY(-50%);color:#84917c}
+.service-search input{width:100%;height:46px;padding:0 16px 0 44px;border:1px solid var(--line);border-radius:13px;background:#fff;color:var(--ink);outline:none;box-shadow:var(--shadow-sm);transition:var(--ease)}
+.service-search input:focus{border-color:var(--green);box-shadow:0 0 0 4px rgba(91,129,33,.10)}
+.category-tabs{display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end}
 .category-tab{
     border:1px solid var(--line);background:#fff;color:var(--muted);
     padding:10px 18px;border-radius:999px;font-size:13px;font-weight:700;
@@ -341,9 +333,13 @@ header{
 .service-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:24px}
 .service-card{
     background:#fff;border:1px solid var(--line);border-radius:22px;
-    padding:28px;display:flex;flex-direction:column;min-height:330px;
-    transition:var(--ease);position:relative;box-shadow:var(--shadow-sm)
+    padding:24px;display:flex;flex-direction:column;min-height:390px;
+    transition:var(--ease);position:relative;box-shadow:var(--shadow-sm);overflow:hidden
 }
+.service-image{height:150px;margin:-24px -24px 22px;overflow:hidden;background:linear-gradient(135deg,#edf3df,#fafcf6)}
+.service-image img{width:100%;height:100%;object-fit:cover;transition:transform .45s ease}
+.service-card:hover .service-image img{transform:scale(1.045)}
+.service-empty{grid-column:1/-1;padding:35px;text-align:center;color:var(--muted);background:#fff;border:1px dashed var(--line);border-radius:18px}
 .service-card:hover{transform:translateY(-6px);box-shadow:var(--shadow-lg);border-color:rgba(46,107,52,0.2)}
 .service-tag{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:var(--green);margin-bottom:14px}
 .service-card h3{font-size:20px;margin-bottom:10px;color:var(--ink)}
@@ -356,6 +352,48 @@ header{
 .service-bottom{margin-top:auto;border-top:1px solid var(--line);padding-top:20px;display:flex;align-items:flex-end;justify-content:space-between;gap:10px}
 .price small{display:block;color:var(--muted);font-size:11px;font-weight:500}
 .price strong{font-family:"Manrope";font-size:20px;color:#e48e1e;font-weight:800}
+.service-card {
+    cursor: pointer;
+    transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease;
+}
+.service-card:hover {
+    transform: translateY(-5px);
+    box-shadow: var(--shadow-lg);
+    border-color: rgba(58, 105, 50, 0.35);
+}
+.service-card h3 a {
+    color: inherit;
+    text-decoration: none;
+    transition: color 0.2s ease;
+}
+.service-card h3 a:hover {
+    color: var(--green);
+}
+.service-card-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.btn-detail-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--green);
+    background: #fff;
+    border: 1px solid var(--line);
+    padding: 10px 14px;
+    border-radius: 12px;
+    text-decoration: none;
+    transition: var(--ease);
+}
+.btn-detail-link:hover {
+    background: var(--green-soft);
+    border-color: var(--green);
+    color: var(--green);
+    transform: translateY(-1px);
+}
 .add-btn{
     width:42px;height:42px;border-radius:12px;border:1px solid var(--line);
     color:var(--green);background:var(--green-soft);display:grid;place-items:center;transition:var(--ease)
@@ -638,7 +676,8 @@ footer h4{color:#fff;font-size:14px;margin-bottom:16px;letter-spacing:-0.01em}
     .hero-visual{min-height:330px;padding:24px}
     .section-head h2,.services-top .section-head h2{font-size:30px}
     .services-top{display:block}
-    .category-tabs{margin-top:20px}
+    .service-controls{align-items:stretch;min-width:0;margin-top:22px}
+    .category-tabs{justify-content:flex-start}
     .service-grid,.portfolio-grid,.problem-inner{grid-template-columns:1fr}
     .problem-inner{padding:0 20px 20px 20px}
     .steps{grid-template-columns:1fr}
@@ -701,35 +740,29 @@ body.logged-in .auth-only-section {
             <a href="#layanan" class="nav-link">Layanan</a>
             <a href="#portfolio" class="nav-link">Portofolio</a>
             <a href="#alur" class="nav-link">Alur Kerja</a>
+            <a href="#konsultasi" class="nav-link">Konsultasi</a>
         </nav>
 
         <div class="nav-actions">
-            <button class="cart-btn auth-only" id="cartOpen"
-            aria-label="Buka keranjang">
+            <button class="cart-btn auth-only" id="cartOpen" aria-label="Buka keranjang">
                 <i class="fa-solid fa-bag-shopping"></i>
                 <span class="cart-count" id="cartCount">0</span>
             </button>
-            <a href="#konsultasi"
-            class="btn btn-primary btn-consult-auth">
-            Mulai Konsultasi
-        </a>
+            <div id="authNav" class="auth-nav">
+                <?php if ($isUserLoggedIn): ?>
+                    <a href="profil.php" class="auth-nav-profile" title="Profil Saya" aria-label="Profil Saya">
+                        <i class="fa-regular fa-user" aria-hidden="true"></i>
+                    </a>
+                    <a href="logout.php" class="auth-nav-logout" id="logoutLink" title="Keluar / Logout" aria-label="Keluar / Logout">
+                        <i class="fa-solid fa-arrow-right-from-bracket" aria-hidden="true"></i>
+                    </a>
+                <?php else: ?>
+                    <a href="login.php" class="auth-nav-link">Login</a>
+                    <a href="register.php" class="auth-nav-button">Daftar</a>
+                <?php endif; ?>
+            </div>
             <button class="menu-toggle" id="menuToggle" aria-label="Menu"><i class="fa-solid fa-bars"></i></button>
         </div>
-        <div id="authNav" class="auth-nav">
-            <?php if ($isUserLoggedIn): ?>
-                <a href="profil.php" class="auth-nav-profile">
-                    <i class="fa-regular fa-user" aria-hidden="true"></i>
-                    <span>Profil</span>
-                </a>
-                <a href="logout.php"
-                class="auth-nav-logout"
-                id="logoutLink">
-                Logout\
-            </a>
-        <?php else: ?>
-            <a href="login.php" class="auth-nav-link">Login</a>
-            <a href="register.php" class="auth-nav-button">Daftar</a>
-        <?php endif; ?>
     </div>
 </header>
 
@@ -857,11 +890,17 @@ body.logged-in .auth-only-section {
                 <h2>Pilih layanan sesuai kebutuhan.</h2>
                 <p>Tidak semua usaha membutuhkan layanan yang sama. Pilih yang benar-benar Anda butuhkan dan susun sesuai kebutuhan bisnis Anda.</p>
             </div>
-            <div class="category-tabs">
-                <button class="category-tab active" data-filter="all">Semua</button>
-                <button class="category-tab" data-filter="branding">Starter Branding</button>
-                <button class="category-tab" data-filter="ecommerce">E-Commerce Grow</button>
-                <button class="category-tab" data-filter="marketing">Full Marketing Scale</button>
+            <div class="service-controls">
+                <label class="service-search" for="serviceSearch">
+                    <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
+                    <input type="search" id="serviceSearch" placeholder="Cari layanan..." autocomplete="off">
+                </label>
+                <div class="category-tabs" role="group" aria-label="Filter kategori layanan">
+                    <button class="category-tab active" type="button" data-filter="all">Semua</button>
+                    <button class="category-tab" type="button" data-filter="branding">Starter Branding</button>
+                    <button class="category-tab" type="button" data-filter="ecommerce">E-Commerce Grow</button>
+                    <button class="category-tab" type="button" data-filter="marketing">Full Marketing Scale</button>
+                </div>
             </div>
         </div>
 
@@ -879,7 +918,10 @@ body.logged-in .auth-only-section {
                 <div class="service-duration"><i class="fa-regular fa-clock"></i> Estimasi: 3–5 hari</div>
                 <div class="service-bottom">
                     <div class="price"><small>Mulai dari</small><strong>Rp750.000</strong></div>
-                    <button class="add-btn" onclick="addToCart(this)" aria-label="Tambah Desain Logo"><i class="fa-solid fa-plus"></i></button>
+                    <div class="service-card-actions">
+                        <a href="detail_layanan.php?id=1" class="btn-detail-link" onclick="event.stopPropagation()">Detail <i class="fa-solid fa-arrow-right"></i></a>
+                        <button class="add-btn" onclick="addToCart(this, event)" aria-label="Tambah Desain Logo"><i class="fa-solid fa-plus"></i></button>
+                    </div>
                 </div>
             </article>
 
@@ -1275,7 +1317,16 @@ body.logged-in .auth-only-section {
 
 
 <script>
-const cart = JSON.parse(localStorage.getItem("ballaFreshCart") || "[]");
+let cart = [];
+try {
+    const savedCart = JSON.parse(localStorage.getItem("ballaFreshCart") || "[]");
+    cart = Array.isArray(savedCart)
+        ? savedCart.filter(item => item && /^\d+$/.test(String(item.id)) && Number(item.qty) > 0)
+            .map(item => ({ ...item, id: String(item.id), qty: Math.min(20, Math.max(1, Number(item.qty) || 1)) }))
+        : [];
+} catch (error) {
+    console.warn("Keranjang lama tidak dapat dibaca; keranjang dimulai ulang.", error);
+}
 
 const money = n => new Intl.NumberFormat("id-ID", {
     style: "currency",
@@ -1292,54 +1343,67 @@ function saveCart() {
 
 async function loadServices() {
     const container = document.getElementById("services-container");
+    if (!container) return;
 
-    if (!container) {
-        console.error("Elemen services-container tidak ditemukan.");
-        return;
-    }
+    const escapeHTML = value => String(value ?? "").replace(/[&<>"']/g, char => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    })[char]);
 
-    const escapeHTML = (value) =>
-        String(value ?? "").replace(/[&<>"']/g, (char) => ({
-            "&": "&amp;",
-            "<": "&lt;",
-            ">": "&gt;",
-            '"': "&quot;",
-            "'": "&#39;"
-        })[char]);
+    const formatMoney = value => new Intl.NumberFormat("id-ID", {
+        style: "currency", currency: "IDR", maximumFractionDigits: 0
+    }).format(Number(value) || 0);
 
-    const money = (value) =>
-        new Intl.NumberFormat("id-ID", {
-            style: "currency",
-            currency: "IDR",
-            maximumFractionDigits: 0
-        }).format(Number(value) || 0);
+    const categoryMap = {
+        "Starter Branding": "branding",
+        "E-Commerce Grow": "ecommerce",
+        "Full Marketing Scale": "marketing"
+    };
+    const sampleImages = {
+        branding: [
+            "https://images.unsplash.com/photo-1634942536790-2534a3b6a3a5?auto=format&fit=crop&w=900&q=80",
+            "https://images.unsplash.com/photo-1600508774634-4e11d34730e2?auto=format&fit=crop&w=900&q=80"
+        ],
+        ecommerce: [
+            "https://images.unsplash.com/photo-1558655146-d09347e92766?auto=format&fit=crop&w=900&q=80",
+            "https://images.unsplash.com/photo-1559028012-481c04fa702d?auto=format&fit=crop&w=900&q=80"
+        ],
+        marketing: [
+            "https://images.unsplash.com/photo-1553877522-43269d4ea984?auto=format&fit=crop&w=900&q=80",
+            "https://images.unsplash.com/photo-1460925895917-afdab827c52f?auto=format&fit=crop&w=900&q=80"
+        ]
+    };
 
     try {
-        const response = await fetch("api_layanan.php", {
-            cache: "no-store"
-        });
-
-        if (!response.ok) {
-            throw new Error("Gagal mengambil data layanan.");
-        }
+        const response = await fetch("api_layanan.php", { cache: "no-store" });
+        if (!response.ok) throw new Error("Gagal mengambil data layanan.");
 
         const result = await response.json();
-
         if (!result.success || !Array.isArray(result.data)) {
             throw new Error("Format data layanan tidak sesuai.");
         }
 
-        container.innerHTML = result.data.map((service) => {
-            const price = Number(service.price) || 0;
-            const duration = service.estimated_days
-                ? `${service.estimated_days} hari`
-                : "Menyesuaikan kebutuhan";
+        // Maksimal dua layanan per kategori: total enam layanan.
+        const categoryCounts = { branding: 0, ecommerce: 0, marketing: 0 };
+        const selectedServices = result.data.filter(service => {
+            const category = categoryMap[service.category_name];
+            if (!category || categoryCounts[category] >= 2) return false;
+            categoryCounts[category]++;
+            return true;
+        });
 
-            const category = ({
-                "Starter Branding": "branding",
-                "E-Commerce Grow": "ecommerce",
-                "Full Marketing Scale": "marketing"
-            })[service.category_name] || "all";
+        const imageIndexes = { branding: 0, ecommerce: 0, marketing: 0 };
+        if (!selectedServices.length) {
+            container.innerHTML = '<div class="service-empty">Belum ada layanan yang tersedia saat ini.</div>';
+            return;
+        }
+
+        container.innerHTML = selectedServices.map(service => {
+            const price = Number(service.price) || 0;
+            const duration = service.estimated_days ? `${service.estimated_days} hari` : "Menyesuaikan kebutuhan";
+            const category = categoryMap[service.category_name] || "branding";
+            const imageIndex = imageIndexes[category]++;
+            const image = service.image || sampleImages[category]?.[imageIndex] || sampleImages[category]?.[0] || sampleImages.branding[0];
+            const features = String(service.features || "").split("|").map(x => x.trim()).filter(Boolean);
 
             return `
                 <article class="service-card"
@@ -1347,68 +1411,52 @@ async function loadServices() {
                     data-name="${escapeHTML(service.name)}"
                     data-category="${category}"
                     data-price="${price}"
-                    data-duration="${escapeHTML(duration)}">
-
-                    <span class="service-tag">
-                        ${escapeHTML(service.category_name)}
-                    </span>
-
-                    <h3>${escapeHTML(service.name)}</h3>
-
-<p>${escapeHTML(service.description)}</p>
-
-<ul class="service-list">
-    ${(service.features || "")
-        .split("|")
-        .filter(feature => feature.trim() !== "")
-        .map(feature => `
-            <li>
-                <i class="fa-solid fa-check"></i>
-                ${escapeHTML(feature.trim())}
-            </li>
-        `)
-        .join("")}
-</ul>
-
-<div class="service-duration">
-    <i class="fa-regular fa-clock"></i>
-    Estimasi: ${escapeHTML(duration)}
-</div>
-
-                    <div class="service-bottom">
-                        <div class="price">
-                            <small>Mulai dari</small>
-                            <strong>${money(price)}</strong>
-                        </div>
-
-                        <button
-                            class="add-btn"
-                            onclick="addToCart(this)"
-                            aria-label="Tambah ${escapeHTML(service.name)} ke keranjang">
-                            <i class="fa-solid fa-plus"></i>
-                        </button>
+                    data-duration="${escapeHTML(duration)}"
+                    onclick="handleCardClick(event, '${escapeHTML(service.id)}')">
+                    <div class="service-image">
+                        <img src="${image}" alt="Contoh visual ${escapeHTML(service.name)}"
+                             loading="lazy" onerror="this.style.display='none'">
                     </div>
-                </article>
-            `;
+                    <span class="service-tag">${escapeHTML(service.category_name)}</span>
+                    <h3><a href="detail_layanan.php?id=${encodeURIComponent(service.id)}" onclick="event.stopPropagation()">${escapeHTML(service.name)}</a></h3>
+                    <p>${escapeHTML(service.description)}</p>
+                    ${features.length ? `<ul class="service-list">
+                        ${features.map(feature => `<li><i class="fa-solid fa-check"></i>${escapeHTML(feature)}</li>`).join("")}
+                    </ul>` : ""}
+                    <div class="service-duration"><i class="fa-regular fa-clock"></i> Estimasi: ${escapeHTML(duration)}</div>
+                    <div class="service-bottom">
+                        <div class="price"><small>Mulai dari</small><strong>${formatMoney(price)}</strong></div>
+                        <div class="service-card-actions">
+                            <a href="detail_layanan.php?id=${encodeURIComponent(service.id)}" class="btn-detail-link" onclick="event.stopPropagation()">
+                                Detail <i class="fa-solid fa-arrow-right"></i>
+                            </a>
+                            <button class="add-btn" type="button" onclick="addToCart(this, event)"
+                                    aria-label="Tambah ${escapeHTML(service.name)} ke keranjang">
+                                <i class="fa-solid fa-plus"></i>
+                            </button>
+                        </div>
+                    </div>
+                </article>`;
         }).join("");
 
-        // Terapkan kembali filter kategori jika fungsi tersedia.
-        const activeFilter = document.querySelector(".filter-btn.active");
-
-        if (activeFilter) {
-            activeFilter.click();
-        }
-
+        applyServiceFilters();
     } catch (error) {
         console.error("Gagal memuat layanan:", error);
-        container.innerHTML = `
-            <p>Layanan belum dapat dimuat. Silakan muat ulang halaman.</p>
-        `;
+        container.innerHTML = '<div class="service-empty">Layanan belum dapat dimuat. Periksa koneksi atau endpoint api_layanan.php, lalu muat ulang halaman.</div>';
     }
+}
+function handleCardClick(event, id) {
+    if (event && (event.target.closest('.add-btn') || event.target.closest('.btn-detail-link') || event.target.closest('a'))) {
+        return;
+    }
+    window.location.href = `detail_layanan.php?id=${encodeURIComponent(id)}`;
 }
 
 /* Keranjang */
-function addToCart(button) {
+function addToCart(button, event) {
+    if (event) {
+        event.stopPropagation();
+    }
     const card = button.closest(".service-card");
 
     if (!card) return;
@@ -1425,6 +1473,10 @@ function addToCart(button) {
     const existing = cart.find(x => x.id === item.id);
 
     if (existing) {
+        if (existing.qty >= 20) {
+            showToast("Maksimal 20 untuk setiap layanan.");
+            return;
+        }
         existing.qty++;
     } else {
         cart.push(item);
@@ -1440,6 +1492,10 @@ function changeQty(id, amount) {
     if (!item) return;
 
     item.qty += amount;
+    if (item.qty > 20) {
+        item.qty = 20;
+        showToast("Maksimal 20 untuk setiap layanan.");
+    }
 
     if (item.qty <= 0) {
         const index = cart.findIndex(x => x.id === id);
@@ -1541,25 +1597,40 @@ function showToast(text) {
     setTimeout(() => toast.classList.remove("show"), 2200);
 }
 
-/* Filter kategori */
+/* Filter kategori dan pencarian layanan */
+function applyServiceFilters() {
+    const activeTab = document.querySelector(".category-tab.active");
+    const category = activeTab?.dataset.filter || "all";
+    const query = (document.getElementById("serviceSearch")?.value || "").trim().toLocaleLowerCase("id-ID");
+
+    let visibleCount = 0;
+    document.querySelectorAll("#services-container .service-card").forEach(card => {
+        const matchesCategory = category === "all" || card.dataset.category === category;
+        const searchable = `${card.dataset.name || ""} ${card.textContent || ""}`.toLocaleLowerCase("id-ID");
+        const visible = matchesCategory && (!query || searchable.includes(query));
+        card.classList.toggle("hidden", !visible);
+        if (visible) visibleCount++;
+    });
+
+    let emptyState = document.getElementById("serviceNoResults");
+    if (!emptyState) {
+        emptyState = document.createElement("div");
+        emptyState.id = "serviceNoResults";
+        emptyState.className = "service-empty";
+        emptyState.textContent = "Layanan tidak ditemukan. Coba kata kunci atau kategori lain.";
+        document.getElementById("services-container")?.appendChild(emptyState);
+    }
+    emptyState.style.display = visibleCount ? "none" : "block";
+}
+
 document.querySelectorAll(".category-tab").forEach(tab => {
     tab.addEventListener("click", () => {
-        document.querySelectorAll(".category-tab").forEach(x =>
-            x.classList.remove("active")
-        );
-
+        document.querySelectorAll(".category-tab").forEach(item => item.classList.remove("active"));
         tab.classList.add("active");
-
-        const filter = tab.dataset.filter;
-
-        document.querySelectorAll(".service-card").forEach(card => {
-            card.classList.toggle(
-                "hidden",
-                filter !== "all" && card.dataset.category !== filter
-            );
-        });
+        applyServiceFilters();
     });
 });
+document.getElementById("serviceSearch")?.addEventListener("input", applyServiceFilters);
 
 /* Dropdown masalah */
 document.querySelectorAll(".problem-trigger").forEach(trigger => {
@@ -1667,15 +1738,16 @@ async function checkAuthStatus() {
             document.body.classList.add("logged-in");
 
             authNav.innerHTML = `
-                <a href="profil.php" class="auth-nav-profile">
+                <a href="profil.php" class="auth-nav-profile" title="Profil Saya" aria-label="Profil Saya">
                     <i class="fa-regular fa-user" aria-hidden="true"></i>
-                    <span>Profil</span>
                 </a>
 
                 <a href="logout.php"
                    class="auth-nav-logout"
-                   id="logoutLink">
-                    Logout
+                   id="logoutLink"
+                   title="Keluar / Logout"
+                   aria-label="Keluar / Logout">
+                    <i class="fa-solid fa-arrow-right-from-bracket" aria-hidden="true"></i>
                 </a>
             `;
         } else {

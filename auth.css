@@ -219,3 +219,68 @@ body {
     .auth-visual h2 { font-size: 35px; }
     .auth-visual .visual-note { margin-top: 20px; }
 }
+
+/* ===== REGISTER FORM IMPROVEMENT ===== */
+
+.auth-form {
+    gap: 16px;
+}
+
+.auth-field label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 600;
+}
+
+.auth-field input {
+    width: 100%;
+    min-height: 48px;
+    padding: 12px 14px;
+    border: 1px solid #dfe7d6;
+    border-radius: 11px;
+    background: #fff;
+    outline: none;
+    transition: .2s ease;
+}
+
+.auth-field input:focus {
+    border-color: #668c3d;
+    box-shadow: 0 0 0 3px rgba(102,140,61,.12);
+}
+
+.password-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
+.password-wrapper input {
+    padding-right: 48px;
+}
+
+.toggle-password {
+    position: absolute;
+    right: 12px;
+    border: none;
+    background: transparent;
+    color: #78816f;
+    cursor: pointer;
+    font-size: 16px;
+    padding: 7px;
+}
+
+.toggle-password:hover {
+    color: #5b8121;
+}
+
+#passwordMessage {
+    display: block;
+    margin-top: 6px;
+    font-size: 12px;
+}
+
+@media (max-width: 600px) {
+    .auth-form {
+        gap: 13px;
+    }
+}
