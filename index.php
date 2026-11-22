@@ -31,7 +31,7 @@ $siteContent = [
     'contact_address' => 'Makassar, Sulawesi Selatan, Indonesia'
 ];
 
-if (isset($conn) && $conn instanceof mysqli) {
+if (!empty($conn)) {
     $contentQuery = $conn->query("SELECT * FROM agency_site_content WHERE id = 1 LIMIT 1");
     if ($contentQuery && ($contentRow = $contentQuery->fetch_assoc())) {
         foreach ($contentRow as $k => $v) {
@@ -44,7 +44,7 @@ if (isset($conn) && $conn instanceof mysqli) {
 
 // Ambil struktur tim (4 orang: 1 Owner + 3 Member)
 $teamMembers = [];
-if (isset($conn) && $conn instanceof mysqli) {
+if (!empty($conn)) {
     $teamQuery = $conn->query("SELECT * FROM agency_team ORDER BY display_order ASC, id ASC");
     if ($teamQuery) {
         while ($tRow = $teamQuery->fetch_assoc()) {
@@ -76,7 +76,7 @@ if (!$ownerMember && !empty($teamOtherMembers)) {
 
 // Artikel edukasi terbaru untuk pengguna yang sudah login
 $homeArticles = [];
-if ($isUserLoggedIn && isset($conn) && $conn instanceof mysqli) {
+if ($isUserLoggedIn && !empty($conn)) {
     $artQuery = $conn->query("SELECT id, title, slug, category, excerpt, image, author_name, author_avatar, read_time, created_at FROM articles WHERE is_published = 1 ORDER BY is_featured DESC, created_at DESC LIMIT 3");
     if ($artQuery) {
         while ($aRow = $artQuery->fetch_assoc()) {
@@ -92,7 +92,7 @@ $userLatestConsultation = null;
 $consultNotice = '';
 $consultNoticeType = '';
 
-if ($isUserLoggedIn && isset($conn) && $conn instanceof mysqli) {
+if ($isUserLoggedIn && !empty($conn)) {
     $uId = (int)$_SESSION['user_id'];
     $uStmt = $conn->prepare("SELECT id, name, email, phone, business_name FROM users WHERE id = ? LIMIT 1");
     if ($uStmt) {

@@ -11,7 +11,7 @@ class SupabaseMysqliResultAdapter {
     private int $cursor = 0;
     public int $num_rows = 0;
 
-    public function __construct(array $rows) {
+    public function __construct(array $rows = []) {
         $this->rows = $rows;
         $this->num_rows = count($rows);
     }
@@ -145,6 +145,8 @@ class SupabaseMysqliStmtAdapter {
 
 class SupabaseMysqliAdapter {
     private PDO $pdo;
+    public ?string $connect_error = null;
+    public int $connect_errno = 0;
     public int $insert_id = 0;
     public int $affected_rows = 0;
     public string $error = '';
