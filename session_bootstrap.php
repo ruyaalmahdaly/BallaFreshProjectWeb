@@ -26,6 +26,9 @@ if (session_status() === PHP_SESSION_NONE) {
         @session_save_path($sessionPath);
     }
 
+    // Session berlaku 7 hari (604800 detik) agar pengguna tidak perlu login ulang
+    ini_set('session.gc_maxlifetime', '604800');
+    ini_set('session.cookie_lifetime', '604800');
     ini_set('session.use_strict_mode', '1');
     ini_set('session.use_only_cookies', '1');
     ini_set('session.cookie_httponly', '1');

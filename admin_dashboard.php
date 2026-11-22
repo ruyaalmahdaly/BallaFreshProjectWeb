@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 date_default_timezone_set('Asia/Makassar');
 
-session_start();
+require_once __DIR__ . '/session_bootstrap.php';
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/midtrans_config.php';
 // Token keamanan untuk proses logout admin.

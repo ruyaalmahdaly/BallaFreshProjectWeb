@@ -1,5 +1,5 @@
 <?php
-session_start();
+require_once __DIR__ . '/session_bootstrap.php';
 require_once __DIR__ . '/db.php';
 
 // Jika admin sudah login, langsung ke dashboard.
