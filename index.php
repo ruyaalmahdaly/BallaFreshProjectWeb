@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/session_bootstrap.php';
+require_once __DIR__ . '/db.php';
 
 $isUserLoggedIn = isset($_SESSION['user_id']);
 $isAdminLoggedIn = isset($_SESSION['admin_id']);
@@ -8,6 +9,162 @@ $isAdminLoggedIn = isset($_SESSION['admin_id']);
 if ($isAdminLoggedIn) {
     header('Location: admin_dashboard.php');
     exit;
+}
+
+// Default konten website (dapat diubah langsung oleh admin di dashboard)
+$siteContent = [
+    'hero_tag' => 'Digital Growth Partner',
+    'hero_title' => 'Lebih banyak peluang, #DariRumahAja.',
+    'hero_description' => 'Balla’ Fresh membantu petani dan UMKM hidroponik rumahan di Makassar mengembangkan pemasaran dan penjualan melalui solusi digital yang sesuai dengan kebutuhan usahanya.',
+    'hero_image' => '',
+    'about_tag' => 'Tentang Balla’ Fresh',
+    'about_title' => 'Mendorong Kemandirian Petani & UMKM Hidroponik Rumahan',
+    'about_story' => 'Balla’ Fresh berawal dari kepedulian terhadap para penggiat hidroponik rumahan di Makassar yang memiliki hasil panen berkualitas prima, namun seringkali kesulitan menjangkau pasar yang lebih luas. Berdiri sebagai agensi pertumbuhan digital, Balla’ Fresh mendedikasikan diri untuk mendampingi petani hidroponik lokal agar dapat bersaing di era digital dengan kemasan profesional, kanal pemasaran terpadu, dan identitas brand yang kuat.',
+    'about_problem' => 'Banyak petani hidroponik rumahan memproduksi sayuran segar berkualitas tinggi seperti selada, pakcoy, dan kale, namun terbentur kendala: ketiadaan branding kemasan yang memikat konsumen modern, proses pemesanan manual yang tidak terstruktur, serta keterbatasan wawasan strategi promosi digital. Akibatnya, penjualan hanya berputar di lingkaran tetangga terdekat dengan margin keuntungan yang rendah.',
+    'about_solution' => 'Balla’ Fresh hadir memberikan solusi terintegrasi dan modular: pembuatan identitas visual (logo & kemasan), setup katalog produk dan pemesanan digital berbasis web, hingga strategi promosi media sosial yang tepat sasaran untuk pasar rumah tangga dan pelaku kuliner sehat di perkotaan.',
+    'about_image' => 'Edible1_dok.jpeg',
+    'cta_badge' => 'Akses Eksklusif Mitra Balla’ Fresh',
+    'cta_title' => 'Buka Seluruh Potensi Usaha Hidroponik Anda Sekarang',
+    'cta_description' => 'Masuk atau daftarkan akun kebun Anda untuk membuka katalog harga resmi, melakukan konsultasi pemetaan kebutuhan, serta memesan layanan digitalisasi Balla’ Fresh secara langsung.',
+    'contact_email' => 'ballafresh01@gmail.com',
+    'contact_phone' => '081213725107',
+    'contact_address' => 'Makassar, Sulawesi Selatan, Indonesia'
+];
+
+if (isset($conn) && $conn instanceof mysqli) {
+    $contentQuery = $conn->query("SELECT * FROM agency_site_content WHERE id = 1 LIMIT 1");
+    if ($contentQuery && ($contentRow = $contentQuery->fetch_assoc())) {
+        foreach ($contentRow as $k => $v) {
+            if ($v !== null && trim((string)$v) !== '') {
+                $siteContent[$k] = $v;
+            }
+        }
+    }
+}
+
+// Ambil struktur tim (4 orang: 1 Owner + 3 Member)
+$teamMembers = [];
+if (isset($conn) && $conn instanceof mysqli) {
+    $teamQuery = $conn->query("SELECT * FROM agency_team ORDER BY display_order ASC, id ASC");
+    if ($teamQuery) {
+        while ($tRow = $teamQuery->fetch_assoc()) {
+            $teamMembers[] = $tRow;
+        }
+    }
+}
+if (empty($teamMembers)) {
+    $teamMembers = [
+        ['id' => 1, 'role_type' => 'owner', 'name' => "Ru'ya Shadiqa A", 'position' => 'Owner & Agency Lead', 'photo' => 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=400&q=80', 'display_order' => 1],
+        ['id' => 2, 'role_type' => 'member', 'name' => 'Andi Fadhlur Rahman', 'position' => 'Lead Brand & Visual Designer', 'photo' => 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=400&q=80', 'display_order' => 2],
+        ['id' => 3, 'role_type' => 'member', 'name' => 'Nur Sernovita Bunga', 'position' => 'Lead Marketing & Social Growth', 'photo' => 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=400&q=80', 'display_order' => 3],
+        ['id' => 4, 'role_type' => 'member', 'name' => 'Muh. Ilham Pratama', 'position' => 'Lead Web & Operations Specialist', 'photo' => 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=400&q=80', 'display_order' => 4],
+    ];
+}
+
+$ownerMember = null;
+$teamOtherMembers = [];
+foreach ($teamMembers as $tm) {
+    if ($tm['role_type'] === 'owner' && $ownerMember === null) {
+        $ownerMember = $tm;
+    } else {
+        $teamOtherMembers[] = $tm;
+    }
+}
+if (!$ownerMember && !empty($teamOtherMembers)) {
+    $ownerMember = array_shift($teamOtherMembers);
+}
+
+// Artikel edukasi terbaru untuk pengguna yang sudah login
+$homeArticles = [];
+if ($isUserLoggedIn && isset($conn) && $conn instanceof mysqli) {
+    $artQuery = $conn->query("SELECT id, title, slug, category, excerpt, image, author_name, author_avatar, read_time, created_at FROM articles WHERE is_published = 1 ORDER BY is_featured DESC, created_at DESC LIMIT 3");
+    if ($artQuery) {
+        while ($aRow = $artQuery->fetch_assoc()) {
+            $homeArticles[] = $aRow;
+        }
+        $artQuery->free();
+    }
+}
+
+// Data pengguna yang sedang login & status siklus konsultasi
+$currentUser = null;
+$userLatestConsultation = null;
+$consultNotice = '';
+$consultNoticeType = '';
+
+if ($isUserLoggedIn && isset($conn) && $conn instanceof mysqli) {
+    $uId = (int)$_SESSION['user_id'];
+    $uStmt = $conn->prepare("SELECT id, name, email, phone, business_name FROM users WHERE id = ? LIMIT 1");
+    if ($uStmt) {
+        $uStmt->bind_param('i', $uId);
+        $uStmt->execute();
+        $currentUser = $uStmt->get_result()->fetch_assoc();
+        $uStmt->close();
+    }
+
+    // Handle pengiriman permintaan konsultasi baru dari beranda
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'submit_home_consultation') {
+        // Validasi apakah sedang ada tiket yang pending atau approved
+        $checkActive = $conn->prepare("SELECT id, status FROM consultations WHERE user_id = ? AND status IN ('pending', 'approved') ORDER BY id DESC LIMIT 1");
+        $activeRow = null;
+        if ($checkActive) {
+            $checkActive->bind_param('i', $uId);
+            $checkActive->execute();
+            $activeRow = $checkActive->get_result()->fetch_assoc();
+            $checkActive->close();
+        }
+
+        if ($activeRow) {
+            if ($activeRow['status'] === 'pending') {
+                $consultNotice = 'Permohonan konsultasi Anda sebelumnya masih menunggu persetujuan (ACC) dari admin.';
+            } else {
+                $consultNotice = 'Anda saat ini memiliki sesi konsultasi yang sedang aktif. Silakan buka room chat di halaman profil Anda.';
+            }
+            $consultNoticeType = 'error';
+        } else {
+            $cClientName = trim((string)($_POST['client_name'] ?? ($currentUser['name'] ?? '')));
+            $cBusinessName = trim((string)($_POST['business_name'] ?? ($currentUser['business_name'] ?? '')));
+            $cPhone = trim((string)($_POST['phone'] ?? ($currentUser['phone'] ?? '')));
+            $cCategory = trim((string)($_POST['category'] ?? 'Starter Branding'));
+            $cNotes = trim((string)($_POST['notes'] ?? ''));
+            $cEmail = (string)($currentUser['email'] ?? '');
+
+            if ($cClientName === '' || $cPhone === '' || $cNotes === '') {
+                $consultNotice = 'Mohon lengkapi Nama, Nomor Kontak, dan Kebutuhan Usaha Anda.';
+                $consultNoticeType = 'error';
+            } else {
+                $insC = $conn->prepare("INSERT INTO consultations (user_id, client_name, business_name, phone, email, category, notes, status) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')");
+                if ($insC) {
+                    $insC->bind_param('issssss', $uId, $cClientName, $cBusinessName, $cPhone, $cEmail, $cCategory, $cNotes);
+                    if ($insC->execute()) {
+                        $newCid = (int)$conn->insert_id;
+                        $initMsg = "Permintaan konsultasi diajukan dari halaman beranda:\nTopik: {$cCategory}\nKebutuhan: {$cNotes}";
+                        $mStmt = $conn->prepare("INSERT INTO consultation_messages (consultation_id, sender_type, sender_id, sender_name, message) VALUES (?, 'user', ?, ?, ?)");
+                        if ($mStmt) {
+                            $mStmt->bind_param('iiss', $newCid, $uId, $cClientName, $initMsg);
+                            $mStmt->execute();
+                            $mStmt->close();
+                        }
+                        $consultNotice = 'Permintaan konsultasi berhasil dikirim! Silakan menunggu persetujuan (ACC) admin untuk memulai obrolan.';
+                        $consultNoticeType = 'success';
+                    } else {
+                        $consultNotice = 'Gagal mengirim permintaan: ' . $insC->error;
+                        $consultNoticeType = 'error';
+                    }
+                    $insC->close();
+                }
+            }
+        }
+    }
+
+    // Ambil konsultasi paling akhir untuk menentukan siklus form
+    $cLatestStmt = $conn->prepare("SELECT id, category, notes, status, created_at, approved_at FROM consultations WHERE user_id = ? ORDER BY id DESC LIMIT 1");
+    if ($cLatestStmt) {
+        $cLatestStmt->bind_param('i', $uId);
+        $cLatestStmt->execute();
+        $userLatestConsultation = $cLatestStmt->get_result()->fetch_assoc();
+        $cLatestStmt->close();
+    }
 }
 ?>
 
@@ -720,6 +877,740 @@ body.logged-in .auth-only-section {
     display: block;
 }
 
+/* ========================================================
+   SECTION TENTANG KAMI (MODERN & REFINED)
+   ======================================================== */
+.about-section {
+    background: #ffffff;
+    position: relative;
+    overflow: hidden;
+}
+.about-hero-grid {
+    display: grid;
+    grid-template-columns: 1.15fr 0.85fr;
+    gap: 36px;
+    align-items: stretch;
+    margin-bottom: 36px;
+}
+.about-story-card {
+    background: #ffffff;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-lg);
+    padding: 36px;
+    box-shadow: var(--shadow-sm);
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    transition: var(--ease);
+}
+.about-story-card:hover {
+    box-shadow: var(--shadow);
+    border-color: rgba(91, 129, 33, 0.25);
+}
+.story-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11.5px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: var(--green);
+    background: var(--green-soft);
+    padding: 6px 14px;
+    border-radius: 999px;
+    margin-bottom: 16px;
+    align-self: flex-start;
+}
+.about-story-card h3 {
+    font-size: 24px;
+    font-weight: 800;
+    color: #0f172a;
+    line-height: 1.3;
+    margin-bottom: 14px;
+    letter-spacing: -0.02em;
+}
+.story-text {
+    font-size: 14.5px;
+    color: #475569;
+    line-height: 1.8;
+    margin-bottom: 20px;
+}
+.about-quote-box {
+    background: #f8fafc;
+    border-left: 3.5px solid var(--green);
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    padding: 14px 18px;
+    margin-bottom: 22px;
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+}
+.about-quote-box .quote-icon {
+    font-size: 18px;
+    color: var(--green);
+    opacity: 0.7;
+    margin-top: 2px;
+    flex-shrink: 0;
+}
+.about-quote-box p {
+    font-size: 13px;
+    font-style: italic;
+    color: #334155;
+    line-height: 1.6;
+    margin: 0;
+}
+.about-values-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    padding-top: 18px;
+    border-top: 1px solid #f1f5f9;
+}
+.about-value-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--green-soft);
+    color: var(--green-dark);
+    font-size: 12px;
+    font-weight: 700;
+    padding: 5px 12px;
+    border-radius: 99px;
+    border: 1px solid rgba(91, 129, 33, 0.15);
+}
+.about-value-pill i {
+    font-size: 11px;
+    color: var(--green);
+}
+
+/* Visual Column */
+.about-visual-card {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+.about-img-frame {
+    position: relative;
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    box-shadow: var(--shadow);
+    background: #e2e8f0;
+    flex: 1;
+    min-height: 290px;
+}
+.about-img {
+    width: 100%;
+    height: 100%;
+    min-height: 290px;
+    max-height: 380px;
+    object-fit: cover;
+    display: block;
+    transition: transform 0.5s ease;
+}
+.about-img-frame:hover .about-img {
+    transform: scale(1.03);
+}
+.about-img-tag-top {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    background: rgba(15, 23, 42, 0.75);
+    backdrop-filter: blur(8px);
+    color: #ffffff;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 4px 12px;
+    border-radius: 99px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+.about-img-overlay-card {
+    position: absolute;
+    bottom: 16px;
+    left: 16px;
+    right: 16px;
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.6);
+    border-radius: 16px;
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.08);
+}
+.about-overlay-icon {
+    width: 38px;
+    height: 38px;
+    border-radius: 10px;
+    background: var(--green-soft);
+    color: var(--green);
+    display: grid;
+    place-items: center;
+    font-size: 18px;
+    flex-shrink: 0;
+}
+.about-img-overlay-card strong {
+    display: block;
+    font-size: 13px;
+    color: #0f172a;
+    font-weight: 700;
+}
+.about-img-overlay-card small {
+    display: block;
+    font-size: 11px;
+    color: #64748b;
+    margin-top: 1px;
+}
+.about-stats-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+}
+.about-stat-item {
+    background: #ffffff;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 14px 10px;
+    text-align: center;
+    box-shadow: var(--shadow-sm);
+    transition: var(--ease);
+}
+.about-stat-item:hover {
+    border-color: rgba(91, 129, 33, 0.3);
+    transform: translateY(-2px);
+}
+.stat-number {
+    display: block;
+    font-family: "Manrope", sans-serif;
+    font-size: 18px;
+    font-weight: 800;
+    color: var(--green);
+    margin-bottom: 2px;
+}
+.stat-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: #64748b;
+    line-height: 1.35;
+    display: block;
+}
+
+/* Problem vs Solution Bento Grid */
+.about-problem-solution-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 28px;
+    margin-bottom: 30px;
+}
+.problem-solution-card {
+    border-radius: var(--radius-lg);
+    padding: 32px;
+    border: 1.5px solid var(--line);
+    background: #ffffff;
+    box-shadow: var(--shadow-sm);
+    display: flex;
+    flex-direction: column;
+    transition: var(--ease);
+}
+.problem-solution-card:hover {
+    box-shadow: var(--shadow);
+}
+.problem-card-theme {
+    background: linear-gradient(180deg, #ffffff 0%, #fffcf8 100%);
+    border-color: #fed7aa;
+}
+.problem-card-theme:hover {
+    border-color: #f97316;
+}
+.solution-card-theme {
+    background: linear-gradient(180deg, #ffffff 0%, #f9fbf6 100%);
+    border-color: rgba(91, 129, 33, 0.25);
+}
+.solution-card-theme:hover {
+    border-color: var(--green);
+}
+.ps-card-header {
+    margin-bottom: 20px;
+}
+.ps-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: .07em;
+    padding: 5px 12px;
+    border-radius: 99px;
+    margin-bottom: 12px;
+}
+.warning-badge {
+    background: #fff7ed;
+    color: #c2410c;
+    border: 1px solid #fed7aa;
+}
+.success-badge {
+    background: var(--green-soft);
+    color: var(--green);
+    border: 1px solid rgba(91, 129, 33, 0.25);
+}
+.problem-solution-card h4 {
+    font-size: 18px;
+    font-weight: 800;
+    color: #0f172a;
+    line-height: 1.35;
+    margin-bottom: 8px;
+}
+.ps-desc {
+    font-size: 13.5px;
+    color: #64748b;
+    line-height: 1.65;
+    margin-bottom: 0;
+}
+.ps-items-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: auto;
+    padding-top: 18px;
+}
+.ps-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+    padding: 14px 16px;
+    border-radius: 14px;
+    transition: var(--ease);
+}
+.problem-item-card {
+    background: #ffffff;
+    border: 1px solid #ffedd5;
+}
+.solution-item-card {
+    background: #ffffff;
+    border: 1px solid rgba(91, 129, 33, 0.15);
+}
+.ps-item:hover {
+    transform: translateX(3px);
+}
+.ps-icon-wrap {
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+    display: grid;
+    place-items: center;
+    font-size: 14px;
+    flex-shrink: 0;
+}
+.warning-icon {
+    background: #fff7ed;
+    color: #ea580c;
+}
+.success-icon {
+    background: var(--green-soft);
+    color: var(--green);
+}
+.ps-text strong {
+    display: block;
+    font-size: 13px;
+    font-weight: 700;
+    color: #0f172a;
+    margin-bottom: 3px;
+}
+.ps-text p {
+    font-size: 12px;
+    color: #64748b;
+    line-height: 1.5;
+    margin: 0;
+}
+
+/* Bottom CTA Bar */
+.about-cta-bar {
+    background: #f8fafc;
+    border: 1.5px solid var(--line);
+    border-radius: var(--radius);
+    padding: 18px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+    flex-wrap: wrap;
+}
+.about-cta-info {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+}
+.about-cta-info i {
+    font-size: 24px;
+    color: var(--green);
+}
+.about-cta-info strong {
+    display: block;
+    font-size: 13.5px;
+    color: #0f172a;
+    font-weight: 700;
+}
+.about-cta-info span {
+    font-size: 12px;
+    color: #64748b;
+}
+.about-cta-btns {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+@media (max-width: 900px) {
+    .about-hero-grid { grid-template-columns: 1fr; gap: 24px; }
+    .about-problem-solution-grid { grid-template-columns: 1fr; gap: 20px; }
+    .about-cta-bar { flex-direction: column; align-items: flex-start; }
+    .about-cta-btns { width: 100%; justify-content: flex-start; }
+}
+
+/* ========================================================
+   HARGA TERKUNCI & LOGIN MITRA DI KATALOG
+   ======================================================== */
+.price-locked {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.price-locked .lock-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: #f1f5f9;
+    color: #475569;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 4px 10px;
+    border-radius: 8px;
+    border: 1px dashed #cbd5e1;
+    width: fit-content;
+}
+.price-locked small {
+    font-size: 11px;
+    color: var(--muted);
+}
+.btn-lock-login {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--green-soft);
+    color: var(--green);
+    border: 1.5px solid var(--green);
+    border-radius: 12px;
+    padding: 8px 14px;
+    font-size: 12px;
+    font-weight: 700;
+    text-decoration: none;
+    transition: var(--ease);
+}
+.btn-lock-login:hover {
+    background: var(--green);
+    color: #ffffff;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(91, 129, 33, 0.25);
+}
+
+/* ========================================================
+   SECTION AJAKAN LOGIN / BANNER CTA
+   ======================================================== */
+.cta-section {
+    padding: 40px 0 90px;
+}
+.cta-banner-wrapper {
+    position: relative;
+    background: linear-gradient(135deg, #1d2a12 0%, #2f4514 45%, #5b8121 100%);
+    border-radius: 32px;
+    padding: 68px 48px;
+    color: #ffffff;
+    overflow: hidden;
+    box-shadow: 0 25px 50px -12px rgba(46, 107, 52, 0.35);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+}
+.cta-orb {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(60px);
+    pointer-events: none;
+    opacity: 0.45;
+}
+.cta-orb-1 {
+    top: -60px;
+    right: -60px;
+    width: 260px;
+    height: 260px;
+    background: #a3e635;
+    animation: ctaPulse 6s ease-in-out infinite alternate;
+}
+.cta-orb-2 {
+    bottom: -60px;
+    left: -40px;
+    width: 220px;
+    height: 220px;
+    background: #e48e1e;
+    animation: ctaPulse 8s ease-in-out infinite alternate-reverse;
+}
+@keyframes ctaPulse {
+    0% { transform: scale(0.9) translate(0, 0); opacity: 0.3; }
+    100% { transform: scale(1.15) translate(20px, -20px); opacity: 0.6; }
+}
+.cta-float-badge {
+    position: absolute;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(255, 255, 255, 0.14);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    padding: 9px 18px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 700;
+    color: #ffffff;
+    box-shadow: 0 8px 22px rgba(0,0,0,0.18);
+    z-index: 2;
+}
+.cta-float-badge.float-top-left {
+    top: 32px;
+    left: 40px;
+    animation: ctaFloat1 5s ease-in-out infinite;
+}
+.cta-float-badge.float-bottom-right {
+    bottom: 32px;
+    right: 40px;
+    animation: ctaFloat2 6s ease-in-out infinite;
+}
+@keyframes ctaFloat1 {
+    0%, 100% { transform: translateY(0px) rotate(0deg); }
+    50% { transform: translateY(-10px) rotate(-1.5deg); }
+}
+@keyframes ctaFloat2 {
+    0%, 100% { transform: translateY(0px) rotate(0deg); }
+    50% { transform: translateY(8px) rotate(2deg); }
+}
+.cta-banner-content {
+    position: relative;
+    z-index: 3;
+    max-width: 680px;
+    margin: 0 auto;
+    text-align: center;
+}
+.cta-eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(255, 255, 255, 0.16);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    color: #dce9bd;
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    padding: 7px 18px;
+    border-radius: 999px;
+    margin-bottom: 22px;
+}
+.cta-banner-content h2 {
+    font-size: clamp(26px, 4vw, 38px);
+    font-weight: 800;
+    line-height: 1.25;
+    margin-bottom: 16px;
+    color: #ffffff;
+}
+.cta-banner-content p {
+    font-size: 16px;
+    line-height: 1.7;
+    color: rgba(255, 255, 255, 0.9);
+    margin-bottom: 32px;
+}
+.cta-actions {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-bottom: 28px;
+}
+.btn-cta-main {
+    background: #ffffff;
+    color: var(--green-dark);
+    font-weight: 800;
+    font-size: 15px;
+    padding: 14px 28px;
+    border-radius: 14px;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.15);
+    transition: var(--ease);
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    text-decoration: none;
+}
+.btn-cta-main:hover {
+    background: #f0fdf4;
+    transform: translateY(-3px);
+    box-shadow: 0 14px 30px rgba(0,0,0,0.22);
+}
+.btn-cta-ghost {
+    background: rgba(255, 255, 255, 0.12);
+    color: #ffffff;
+    border: 1.5px solid rgba(255, 255, 255, 0.4);
+    font-weight: 700;
+    font-size: 15px;
+    padding: 14px 28px;
+    border-radius: 14px;
+    transition: var(--ease);
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    backdrop-filter: blur(8px);
+    text-decoration: none;
+}
+.btn-cta-ghost:hover {
+    background: rgba(255, 255, 255, 0.22);
+    border-color: #ffffff;
+    transform: translateY(-3px);
+}
+.cta-perks {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 24px;
+    flex-wrap: wrap;
+    font-size: 13px;
+    color: rgba(255, 255, 255, 0.85);
+    font-weight: 600;
+}
+.cta-perks i {
+    color: #a3e635;
+    margin-right: 6px;
+}
+@media (max-width: 640px) {
+    .cta-banner-wrapper { padding: 42px 24px; border-radius: 24px; }
+    .cta-float-badge { display: none; }
+    .btn-cta-main, .btn-cta-ghost { width: 100%; justify-content: center; }
+}
+
+/* ARTIKEL HOME SECTION */
+.home-articles-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 24px;
+    margin-top: 32px;
+}
+.home-art-card {
+    background: #ffffff;
+    border-radius: 18px;
+    border: 1px solid var(--line);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    transition: var(--ease);
+}
+.home-art-card:hover {
+    transform: translateY(-4px);
+    box-shadow: var(--shadow);
+    border-color: rgba(91, 129, 33, 0.3);
+}
+.home-art-thumb-wrap {
+    position: relative;
+    height: 190px;
+    overflow: hidden;
+    background: #e2e8f0;
+    display: block;
+}
+.home-art-thumb {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transition: transform 0.4s ease;
+}
+.home-art-card:hover .home-art-thumb {
+    transform: scale(1.05);
+}
+.home-art-badge {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(8px);
+    padding: 4px 10px;
+    border-radius: 99px;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--green);
+    border: 1px solid rgba(91, 129, 33, 0.15);
+}
+.home-art-body {
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+}
+.home-art-title {
+    font-size: 15px;
+    font-weight: 800;
+    line-height: 1.35;
+    margin-bottom: 8px;
+    color: #0f172a;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+.home-art-title a {
+    color: inherit;
+    text-decoration: none;
+    transition: var(--ease);
+}
+.home-art-title a:hover {
+    color: var(--green);
+}
+.home-art-excerpt {
+    font-size: 13px;
+    color: #64748b;
+    line-height: 1.55;
+    margin-bottom: 16px;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    flex: 1;
+}
+.home-art-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-top: 14px;
+    border-top: 1px solid #f1f5f9;
+    font-size: 11.5px;
+    color: #94a3b8;
+}
+.home-art-author {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+}
+.home-art-author-img {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    object-fit: cover;
+}
+@media (max-width: 900px) {
+    .home-articles-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
 </style>
 </head>
 
@@ -736,15 +1627,17 @@ body.logged-in .auth-only-section {
 
         <nav class="nav-menu" id="navMenu">
             <a href="#beranda" class="nav-link active">Beranda</a>
-            <a href="#solusi" class="nav-link">Solusi</a>
+            <a href="#tentang-kami" class="nav-link">Tentang Kami</a>
             <a href="#layanan" class="nav-link">Layanan</a>
+            <?php if ($isUserLoggedIn): ?>
+                <a href="artikel.php" class="nav-link">Artikel</a>
+            <?php endif; ?>
             <a href="#portfolio" class="nav-link">Portofolio</a>
-            <a href="#alur" class="nav-link">Alur Kerja</a>
             <a href="#konsultasi" class="nav-link">Konsultasi</a>
         </nav>
 
         <div class="nav-actions">
-            <button class="cart-btn auth-only" id="cartOpen" aria-label="Buka keranjang">
+            <button class="cart-btn" id="cartOpen" aria-label="Buka keranjang">
                 <i class="fa-solid fa-bag-shopping"></i>
                 <span class="cart-count" id="cartCount">0</span>
             </button>
@@ -772,19 +1665,18 @@ body.logged-in .auth-only-section {
 <section class="hero" id="beranda">
     <div class="container hero-grid">
         <div>
-            <span class="eyebrow"><i class="fa-solid fa-leaf"></i> Digital Growth Partner</span>
-            <h1>Lebih banyak peluang, <span>#DariRumahAja.</span></h1>
+            <span class="eyebrow"><i class="fa-solid fa-leaf"></i> <?= htmlspecialchars($siteContent['hero_tag'] ?? 'Digital Growth Partner') ?></span>
+            <h1><?= htmlspecialchars($siteContent['hero_title'] ?? 'Lebih banyak peluang, #DariRumahAja.') ?></h1>
             <p class="hero-copy">
-                Balla’ Fresh membantu petani dan UMKM hidroponik rumahan di Makassar
-                mengembangkan pemasaran dan penjualan melalui solusi digital yang sesuai dengan kebutuhan usahanya.
+                <?= nl2br(htmlspecialchars($siteContent['hero_description'] ?? 'Balla’ Fresh membantu petani dan UMKM hidroponik rumahan di Makassar mengembangkan pemasaran dan penjualan melalui solusi digital yang sesuai dengan kebutuhan usahanya.')) ?>
             </p>
             <div class="hero-actions">
                 <a href="#layanan" class="btn btn-primary">Jelajahi Layanan <i class="fa-solid fa-arrow-right"></i></a>
-                <a href="#portfolio" class="btn btn-outline">Lihat Portofolio</a>
+                <a href="#tentang-kami" class="btn btn-outline">Tentang Kami</a>
             </div>
             <div class="hero-note">
                 <i class="fa-solid fa-circle-check"></i>
-                <span>Layanan dapat dipilih satu per satu sesuai kebutuhan mitra.</span>
+                <span>Layanan modular yang dapat dipilih sesuai kebutuhan kebun Anda.</span>
             </div>
         </div>
 
@@ -797,6 +1689,11 @@ body.logged-in .auth-only-section {
                     </div>
                     <span class="panel-dot"></span>
                 </div>
+                <?php if (!empty($siteContent['hero_image'])): ?>
+                    <div style="margin-bottom:16px;border-radius:14px;overflow:hidden;max-height:160px">
+                        <img src="<?= htmlspecialchars($siteContent['hero_image']) ?>" alt="Visual Balla' Fresh" style="width:100%;height:100%;object-fit:cover">
+                    </div>
+                <?php endif; ?>
                 <div class="hero-services">
                     <div class="hero-service">
                         <div class="hero-service-icon"><i class="fa-solid fa-pen-ruler"></i></div>
@@ -812,8 +1709,192 @@ body.logged-in .auth-only-section {
                     </div>
                 </div>
             </div>
-            <div class="hero-chip"><i class="fa-solid fa-sliders"></i> Pilih sesuai kebutuhan</div>
+            <div class="hero-chip"><i class="fa-solid fa-sliders"></i> Solusi Terarah & Fleksibel</div>
         </div>
+    </div>
+</section>
+
+<!-- TENTANG KAMI -->
+<section class="section about-section" id="tentang-kami">
+    <div class="container">
+        <div class="section-head text-center">
+            <span class="eyebrow"><i class="fa-solid fa-leaf"></i> <?= htmlspecialchars($siteContent['about_tag'] ?? 'Tentang Balla’ Fresh') ?></span>
+            <h2><?= htmlspecialchars($siteContent['about_title'] ?? 'Mendorong Kemandirian Petani & UMKM Hidroponik Rumahan') ?></h2>
+            <p>Membawa hasil panen terbaik hidroponik lokal Makassar melangkah lebih jauh ke pasar digital yang berdaya saing tinggi.</p>
+        </div>
+
+        <!-- 1. Story & Visual Showcase (2-Column Hero Row) -->
+        <div class="about-hero-grid">
+            <!-- Left: Cerita Berkembangnya Agensi -->
+            <div class="about-story-card">
+                <div>
+                    <span class="story-pill"><i class="fa-solid fa-seedling"></i> Cerita Berkembangnya Agensi</span>
+                    <h3>Berawal dari Kepedulian Nyata Petani Lokal</h3>
+                    <p class="story-text"><?= nl2br(htmlspecialchars($siteContent['about_story'] ?? '')) ?></p>
+                    
+                    <div class="about-quote-box">
+                        <i class="fa-solid fa-quote-left quote-icon"></i>
+                        <p>“Kami percaya sayur hidroponik lokal bukan sekadar komoditas dapur, melainkan produk premium bernilai tinggi yang layak tampil di etalase swalayan dan pasar modern.”</p>
+                    </div>
+                </div>
+
+                <div class="about-values-row">
+                    <div class="about-value-pill">
+                        <i class="fa-solid fa-circle-check"></i>
+                        <span>100% Fokus Hidroponik</span>
+                    </div>
+                    <div class="about-value-pill">
+                        <i class="fa-solid fa-cubes"></i>
+                        <span>Layanan Modular</span>
+                    </div>
+                    <div class="about-value-pill">
+                        <i class="fa-solid fa-location-dot"></i>
+                        <span>Basis di Makassar</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right: Dokumentasi & Key Metrics -->
+            <div class="about-visual-card">
+                <div class="about-img-frame">
+                    <?php $aboutImg = !empty($siteContent['about_image']) ? $siteContent['about_image'] : 'Edible1_dok.jpeg'; ?>
+                    <img src="<?= htmlspecialchars($aboutImg) ?>" alt="Dokumentasi Balla’ Fresh Hidroponik" class="about-img" onerror="this.src='Edible1_dok.jpeg'">
+                    
+                    <div class="about-img-tag-top">
+                        <i class="fa-solid fa-camera"></i> Dokumentasi Nyata
+                    </div>
+
+                    <div class="about-img-overlay-card">
+                        <div class="about-overlay-icon">
+                            <i class="fa-solid fa-leaf"></i>
+                        </div>
+                        <div>
+                            <strong>Pendampingan Langsung Kebun</strong>
+                            <small>Membina kemasan &amp; pemasaran petani hidroponik lokal di Makassar</small>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="about-stats-grid">
+                    <div class="about-stat-item">
+                        <span class="stat-number">100%</span>
+                        <span class="stat-label">Spesialisasi Hidroponik</span>
+                    </div>
+                    <div class="about-stat-item">
+                        <span class="stat-number">B2B &amp; B2C</span>
+                        <span class="stat-label">Pasar Ritel &amp; Rumah Tangga</span>
+                    </div>
+                    <div class="about-stat-item">
+                        <span class="stat-number">Modular</span>
+                        <span class="stat-label">Pilih Sesuai Kebutuhan</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 2. Problem & Solution Bento Grid (Side-by-Side Comparison) -->
+        <div class="about-problem-solution-grid">
+            
+            <!-- Left: Permasalahan Terdekat UMKM Hidroponik -->
+            <div class="problem-solution-card problem-card-theme">
+                <div class="ps-card-header">
+                    <span class="ps-badge warning-badge"><i class="fa-solid fa-triangle-exclamation"></i> Permasalahan Terdekat UMKM Hidroponik</span>
+                    <h4>Kendala Nyata yang Kerap Menghambat Usaha:</h4>
+                    <p class="ps-desc"><?= nl2br(htmlspecialchars($siteContent['about_problem'] ?? '')) ?></p>
+                </div>
+
+                <div class="ps-items-list">
+                    <div class="ps-item problem-item-card">
+                        <div class="ps-icon-wrap warning-icon">
+                            <i class="fa-solid fa-box-open"></i>
+                        </div>
+                        <div class="ps-text">
+                            <strong>Ketiadaan Branding &amp; Kemasan Standar</strong>
+                            <p>Sayuran segar bermutu dipasarkan polos tanpa label dan izin resmi, sehingga sulit masuk ritel modern dan nilai jualnya rendah.</p>
+                        </div>
+                    </div>
+
+                    <div class="ps-item problem-item-card">
+                        <div class="ps-icon-wrap warning-icon">
+                            <i class="fa-solid fa-comments-dollar"></i>
+                        </div>
+                        <div class="ps-text">
+                            <strong>Pemesanan Manual Tidak Terstruktur</strong>
+                            <p>Pencatatan order via chat WhatsApp personal sering terselip, lambat direspon, dan rawan salah kirim varian sayur.</p>
+                        </div>
+                    </div>
+
+                    <div class="ps-item problem-item-card">
+                        <div class="ps-icon-wrap warning-icon">
+                            <i class="fa-solid fa-map-location-dot"></i>
+                        </div>
+                        <div class="ps-text">
+                            <strong>Jangkauan Pasar Hanya Sebatas Tetangga</strong>
+                            <p>Keterbatasan saluran promosi membuat penjualan berputar di lingkaran terdekat saja dengan margin keuntungan yang sempit.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right: Solusi Terarah Balla' Fresh -->
+            <div class="problem-solution-card solution-card-theme">
+                <div class="ps-card-header">
+                    <span class="ps-badge success-badge"><i class="fa-solid fa-shield-halved"></i> Solusi Terarah Balla’ Fresh</span>
+                    <h4>Pendekatan Terpadu &amp; Teruji Siap Pakai:</h4>
+                    <p class="ps-desc"><?= nl2br(htmlspecialchars($siteContent['about_solution'] ?? '')) ?></p>
+                </div>
+
+                <div class="ps-items-list">
+                    <div class="ps-item solution-item-card">
+                        <div class="ps-icon-wrap success-icon">
+                            <i class="fa-solid fa-tags"></i>
+                        </div>
+                        <div class="ps-text">
+                            <strong>Desain Identitas &amp; Kemasan Siap Ritel</strong>
+                            <p>Logo profesional, stiker kemasan kedap udara, dan identitas visual yang memikat minat beli konsumen swalayan dan kafe sehat.</p>
+                        </div>
+                    </div>
+
+                    <div class="ps-item solution-item-card">
+                        <div class="ps-icon-wrap success-icon">
+                            <i class="fa-solid fa-laptop-code"></i>
+                        </div>
+                        <div class="ps-text">
+                            <strong>Katalog Digital &amp; Format Pemesanan Cepat</strong>
+                            <p>Katalog produk terstruktur yang memudahkan mitra memilih layanan dan mendigitalisasi rekap order harian tanpa repot.</p>
+                        </div>
+                    </div>
+
+                    <div class="ps-item solution-item-card">
+                        <div class="ps-icon-wrap success-icon">
+                            <i class="fa-solid fa-bullhorn"></i>
+                        </div>
+                        <div class="ps-text">
+                            <strong>Pemasaran Digital &amp; Penetrasi Pasar B2B</strong>
+                            <p>Strategi konten media sosial serta pendampingan untuk menghubungkan kebun langsung dengan restoran dan pelanggan langganan.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- 3. Bottom Action Banner -->
+        <div class="about-cta-bar">
+            <div class="about-cta-info">
+                <i class="fa-solid fa-lightbulb"></i>
+                <div>
+                    <strong>Punya kendala serupa pada kebun hidroponik Anda?</strong>
+                    <span>Konsultasikan langsung bersama tim kami untuk menemukan solusi digital dan kemasan yang tepat sasaran.</span>
+                </div>
+            </div>
+            <div class="about-cta-btns">
+                <a href="#solusi" class="btn btn-outline" style="border-radius:99px;font-size:13px;padding:9px 18px">Eksplor Solusi</a>
+                <a href="#layanan" class="btn btn-outline" style="border-radius:99px;font-size:13px;padding:9px 18px">Katalog Layanan</a>
+                <a href="#konsultasi" class="btn btn-primary" style="border-radius:99px;font-size:13px;padding:9px 20px">Mulai Konsultasi <i class="fa-solid fa-arrow-right"></i></a>
+            </div>
+        </div>
+
     </div>
 </section>
 
@@ -917,11 +1998,24 @@ body.logged-in .auth-only-section {
                 </ul>
                 <div class="service-duration"><i class="fa-regular fa-clock"></i> Estimasi: 3–5 hari</div>
                 <div class="service-bottom">
-                    <div class="price"><small>Mulai dari</small><strong>Rp750.000</strong></div>
-                    <div class="service-card-actions">
-                        <a href="detail_layanan.php?id=1" class="btn-detail-link" onclick="event.stopPropagation()">Detail <i class="fa-solid fa-arrow-right"></i></a>
-                        <button class="add-btn" onclick="addToCart(this, event)" aria-label="Tambah Desain Logo"><i class="fa-solid fa-plus"></i></button>
-                    </div>
+                    <?php if ($isUserLoggedIn): ?>
+                        <div class="price"><small>Mulai dari</small><strong>Rp750.000</strong></div>
+                        <div class="service-card-actions">
+                            <a href="detail_layanan.php?id=1" class="btn-detail-link" onclick="event.stopPropagation()">Detail <i class="fa-solid fa-arrow-right"></i></a>
+                            <button class="add-btn" onclick="addToCart(this, event)" aria-label="Tambah Desain Logo"><i class="fa-solid fa-plus"></i></button>
+                        </div>
+                    <?php else: ?>
+                        <div class="price price-locked">
+                            <span class="lock-badge"><i class="fa-solid fa-lock"></i> Harga Khusus Mitra</span>
+                            <small>Login untuk melihat penawaran</small>
+                        </div>
+                        <div class="service-card-actions">
+                            <a href="detail_layanan.php?id=1" class="btn-detail-link" onclick="event.stopPropagation()">Detail <i class="fa-solid fa-arrow-right"></i></a>
+                            <a href="login.php" class="btn-lock-login" onclick="event.stopPropagation()" title="Login untuk memesan">
+                                <i class="fa-solid fa-lock"></i> Pesan
+                            </a>
+                        </div>
+                    <?php endif; ?>
                 </div>
             </article>
 
@@ -936,8 +2030,18 @@ body.logged-in .auth-only-section {
                 </ul>
                 <div class="service-duration"><i class="fa-regular fa-clock"></i> Estimasi: 2–4 hari</div>
                 <div class="service-bottom">
-                    <div class="price"><small>Mulai dari</small><strong>Rp350.000</strong></div>
-                    <button class="add-btn" onclick="addToCart(this)" aria-label="Tambah Stiker Kemasan"><i class="fa-solid fa-plus"></i></button>
+                    <?php if ($isUserLoggedIn): ?>
+                        <div class="price"><small>Mulai dari</small><strong>Rp350.000</strong></div>
+                        <button class="add-btn" onclick="addToCart(this, event)" aria-label="Tambah Stiker Kemasan"><i class="fa-solid fa-plus"></i></button>
+                    <?php else: ?>
+                        <div class="price price-locked">
+                            <span class="lock-badge"><i class="fa-solid fa-lock"></i> Harga Khusus Mitra</span>
+                            <small>Login untuk melihat penawaran</small>
+                        </div>
+                        <a href="login.php" class="btn-lock-login" onclick="event.stopPropagation()" title="Login untuk memesan">
+                            <i class="fa-solid fa-lock"></i> Pesan
+                        </a>
+                    <?php endif; ?>
                 </div>
             </article>
 
@@ -952,8 +2056,18 @@ body.logged-in .auth-only-section {
                 </ul>
                 <div class="service-duration"><i class="fa-regular fa-clock"></i> Estimasi: 2–3 hari</div>
                 <div class="service-bottom">
-                    <div class="price"><small>Mulai dari</small><strong>Rp400.000</strong></div>
-                    <button class="add-btn" onclick="addToCart(this)" aria-label="Tambah Setup Profil"><i class="fa-solid fa-plus"></i></button>
+                    <?php if ($isUserLoggedIn): ?>
+                        <div class="price"><small>Mulai dari</small><strong>Rp400.000</strong></div>
+                        <button class="add-btn" onclick="addToCart(this, event)" aria-label="Tambah Setup Profil"><i class="fa-solid fa-plus"></i></button>
+                    <?php else: ?>
+                        <div class="price price-locked">
+                            <span class="lock-badge"><i class="fa-solid fa-lock"></i> Harga Khusus Mitra</span>
+                            <small>Login untuk melihat penawaran</small>
+                        </div>
+                        <a href="login.php" class="btn-lock-login" onclick="event.stopPropagation()" title="Login untuk memesan">
+                            <i class="fa-solid fa-lock"></i> Pesan
+                        </a>
+                    <?php endif; ?>
                 </div>
             </article>
 
@@ -969,8 +2083,18 @@ body.logged-in .auth-only-section {
                 </ul>
                 <div class="service-duration"><i class="fa-regular fa-clock"></i> Estimasi: 7–14 hari</div>
                 <div class="service-bottom">
-                    <div class="price"><small>Mulai dari</small><strong>Rp3.000.000</strong></div>
-                    <button class="add-btn" onclick="addToCart(this)" aria-label="Tambah Website E-Commerce"><i class="fa-solid fa-plus"></i></button>
+                    <?php if ($isUserLoggedIn): ?>
+                        <div class="price"><small>Mulai dari</small><strong>Rp3.000.000</strong></div>
+                        <button class="add-btn" onclick="addToCart(this, event)" aria-label="Tambah Website E-Commerce"><i class="fa-solid fa-plus"></i></button>
+                    <?php else: ?>
+                        <div class="price price-locked">
+                            <span class="lock-badge"><i class="fa-solid fa-lock"></i> Harga Khusus Mitra</span>
+                            <small>Login untuk melihat penawaran</small>
+                        </div>
+                        <a href="login.php" class="btn-lock-login" onclick="event.stopPropagation()" title="Login untuk memesan">
+                            <i class="fa-solid fa-lock"></i> Pesan
+                        </a>
+                    <?php endif; ?>
                 </div>
             </article>
 
@@ -985,8 +2109,18 @@ body.logged-in .auth-only-section {
                 </ul>
                 <div class="service-duration"><i class="fa-regular fa-clock"></i> Estimasi: 3–5 hari</div>
                 <div class="service-bottom">
-                    <div class="price"><small>Mulai dari</small><strong>Rp600.000</strong></div>
-                    <button class="add-btn" onclick="addToCart(this)" aria-label="Tambah Katalog Produk"><i class="fa-solid fa-plus"></i></button>
+                    <?php if ($isUserLoggedIn): ?>
+                        <div class="price"><small>Mulai dari</small><strong>Rp600.000</strong></div>
+                        <button class="add-btn" onclick="addToCart(this, event)" aria-label="Tambah Katalog Produk"><i class="fa-solid fa-plus"></i></button>
+                    <?php else: ?>
+                        <div class="price price-locked">
+                            <span class="lock-badge"><i class="fa-solid fa-lock"></i> Harga Khusus Mitra</span>
+                            <small>Login untuk melihat penawaran</small>
+                        </div>
+                        <a href="login.php" class="btn-lock-login" onclick="event.stopPropagation()" title="Login untuk memesan">
+                            <i class="fa-solid fa-lock"></i> Pesan
+                        </a>
+                    <?php endif; ?>
                 </div>
             </article>
 
@@ -1001,8 +2135,18 @@ body.logged-in .auth-only-section {
                 </ul>
                 <div class="service-duration"><i class="fa-regular fa-clock"></i> Estimasi: 1–3 hari / request</div>
                 <div class="service-bottom">
-                    <div class="price"><small>Mulai dari</small><strong>Rp500.000</strong></div>
-                    <button class="add-btn" onclick="addToCart(this)" aria-label="Tambah Maintenance"><i class="fa-solid fa-plus"></i></button>
+                    <?php if ($isUserLoggedIn): ?>
+                        <div class="price"><small>Mulai dari</small><strong>Rp500.000</strong></div>
+                        <button class="add-btn" onclick="addToCart(this, event)" aria-label="Tambah Maintenance"><i class="fa-solid fa-plus"></i></button>
+                    <?php else: ?>
+                        <div class="price price-locked">
+                            <span class="lock-badge"><i class="fa-solid fa-lock"></i> Harga Khusus Mitra</span>
+                            <small>Login untuk melihat penawaran</small>
+                        </div>
+                        <a href="login.php" class="btn-lock-login" onclick="event.stopPropagation()" title="Login untuk memesan">
+                            <i class="fa-solid fa-lock"></i> Pesan
+                        </a>
+                    <?php endif; ?>
                 </div>
             </article>
 
@@ -1018,8 +2162,18 @@ body.logged-in .auth-only-section {
                 </ul>
                 <div class="service-duration"><i class="fa-regular fa-clock"></i> Estimasi: 5–7 hari</div>
                 <div class="service-bottom">
-                    <div class="price"><small>Mulai dari</small><strong>Rp1.000.000</strong></div>
-                    <button class="add-btn" onclick="addToCart(this)" aria-label="Tambah Produksi Konten"><i class="fa-solid fa-plus"></i></button>
+                    <?php if ($isUserLoggedIn): ?>
+                        <div class="price"><small>Mulai dari</small><strong>Rp1.000.000</strong></div>
+                        <button class="add-btn" onclick="addToCart(this, event)" aria-label="Tambah Produksi Konten"><i class="fa-solid fa-plus"></i></button>
+                    <?php else: ?>
+                        <div class="price price-locked">
+                            <span class="lock-badge"><i class="fa-solid fa-lock"></i> Harga Khusus Mitra</span>
+                            <small>Login untuk melihat penawaran</small>
+                        </div>
+                        <a href="login.php" class="btn-lock-login" onclick="event.stopPropagation()" title="Login untuk memesan">
+                            <i class="fa-solid fa-lock"></i> Pesan
+                        </a>
+                    <?php endif; ?>
                 </div>
             </article>
 
@@ -1034,8 +2188,18 @@ body.logged-in .auth-only-section {
                 </ul>
                 <div class="service-duration"><i class="fa-regular fa-clock"></i> Estimasi: 7 hari setup + berjalan bulanan</div>
                 <div class="service-bottom">
-                    <div class="price"><small>Mulai dari / bulan</small><strong>Rp1.500.000</strong></div>
-                    <button class="add-btn" onclick="addToCart(this)" aria-label="Tambah Social Media Management"><i class="fa-solid fa-plus"></i></button>
+                    <?php if ($isUserLoggedIn): ?>
+                        <div class="price"><small>Mulai dari / bulan</small><strong>Rp1.500.000</strong></div>
+                        <button class="add-btn" onclick="addToCart(this, event)" aria-label="Tambah Social Media Management"><i class="fa-solid fa-plus"></i></button>
+                    <?php else: ?>
+                        <div class="price price-locked">
+                            <span class="lock-badge"><i class="fa-solid fa-lock"></i> Harga Khusus Mitra</span>
+                            <small>Login untuk melihat penawaran</small>
+                        </div>
+                        <a href="login.php" class="btn-lock-login" onclick="event.stopPropagation()" title="Login untuk memesan">
+                            <i class="fa-solid fa-lock"></i> Pesan
+                        </a>
+                    <?php endif; ?>
                 </div>
             </article>
 
@@ -1050,8 +2214,18 @@ body.logged-in .auth-only-section {
                 </ul>
                 <div class="service-duration"><i class="fa-regular fa-clock"></i> Estimasi: 3–5 hari setup + monitoring</div>
                 <div class="service-bottom">
-                    <div class="price"><small>Mulai dari / bulan</small><strong>Rp1.000.000</strong></div>
-                    <button class="add-btn" onclick="addToCart(this)" aria-label="Tambah Ads Management"><i class="fa-solid fa-plus"></i></button>
+                    <?php if ($isUserLoggedIn): ?>
+                        <div class="price"><small>Mulai dari / bulan</small><strong>Rp1.000.000</strong></div>
+                        <button class="add-btn" onclick="addToCart(this, event)" aria-label="Tambah Ads Management"><i class="fa-solid fa-plus"></i></button>
+                    <?php else: ?>
+                        <div class="price price-locked">
+                            <span class="lock-badge"><i class="fa-solid fa-lock"></i> Harga Khusus Mitra</span>
+                            <small>Login untuk melihat penawaran</small>
+                        </div>
+                        <a href="login.php" class="btn-lock-login" onclick="event.stopPropagation()" title="Login untuk memesan">
+                            <i class="fa-solid fa-lock"></i> Pesan
+                        </a>
+                    <?php endif; ?>
                 </div>
             </article>
 
@@ -1164,6 +2338,55 @@ body.logged-in .auth-only-section {
     </div>
 </section>
 
+<?php if ($isUserLoggedIn && !empty($homeArticles)): ?>
+<!-- ARTIKEL & EDUKASI SECTION (Khusus Pengguna Login/Terdaftar) -->
+<section class="section" id="artikel-preview">
+    <div class="container">
+        <div class="section-head" style="display:flex; justify-content:space-between; align-items:flex-end; flex-wrap:wrap; gap:16px;">
+            <div>
+                <span class="eyebrow"><i class="fa-solid fa-leaf"></i> Edukasi &amp; Wawasan Agensi</span>
+                <h2>Artikel &amp; Panduan Terkini</h2>
+                <p>Strategi branding, riset pasar, dan teknik budidaya dari tim Balla’ Fresh untuk mempercepat kemajuan usaha hidroponik Anda.</p>
+            </div>
+            <div>
+                <a href="artikel.php" class="btn btn-outline" style="border-radius:99px; font-weight:700; padding:10px 22px;">
+                    Jelajahi Semua Artikel <i class="fa-solid fa-arrow-right"></i>
+                </a>
+            </div>
+        </div>
+
+        <div class="home-articles-grid">
+            <?php foreach ($homeArticles as $hArt): 
+                $hImg = !empty($hArt['image']) ? $hArt['image'] : 'https://images.unsplash.com/photo-1540420773420-3366772f4999?auto=format&fit=crop&w=600&q=80';
+                $hAvatar = !empty($hArt['author_avatar']) ? $hArt['author_avatar'] : 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=100&q=80';
+            ?>
+                <article class="home-art-card">
+                    <a href="baca_artikel.php?slug=<?= urlencode($hArt['slug']) ?>" class="home-art-thumb-wrap">
+                        <img class="home-art-thumb" src="<?= htmlspecialchars($hImg) ?>" alt="<?= htmlspecialchars($hArt['title']) ?>" loading="lazy">
+                        <span class="home-art-badge"><?= htmlspecialchars($hArt['category']) ?></span>
+                    </a>
+                    <div class="home-art-body">
+                        <h3 class="home-art-title">
+                            <a href="baca_artikel.php?slug=<?= urlencode($hArt['slug']) ?>">
+                                <?= htmlspecialchars($hArt['title']) ?>
+                            </a>
+                        </h3>
+                        <p class="home-art-excerpt"><?= htmlspecialchars($hArt['excerpt']) ?></p>
+                        <div class="home-art-foot">
+                            <div class="home-art-author">
+                                <img class="home-art-author-img" src="<?= htmlspecialchars($hAvatar) ?>" alt="<?= htmlspecialchars($hArt['author_name']) ?>">
+                                <span><?= htmlspecialchars($hArt['author_name']) ?></span>
+                            </div>
+                            <span><i class="fa-regular fa-clock"></i> <?= htmlspecialchars($hArt['read_time']) ?></span>
+                        </div>
+                    </div>
+                </article>
+            <?php endforeach; ?>
+        </div>
+    </div>
+</section>
+<?php endif; ?>
+
 <!-- CONSULTATION -->
 <section class="section auth-only-section" id="konsultasi">
     <div class="container">
@@ -1180,38 +2403,104 @@ body.logged-in .auth-only-section {
             </div>
 
             <div class="form-card">
-                <h3>Formulir Konsultasi Mitra</h3>
-                <form id="consultForm">
-                    <div class="form-grid">
-                        <div class="form-group">
-                            <label>Nama Pemilik Usaha</label>
-                            <input class="form-control" type="text" placeholder="Nama Anda" required>
+                <?php if (!empty($consultNotice)): ?>
+                    <div style="padding:12px 16px;border-radius:10px;margin-bottom:16px;font-size:13px;font-weight:600;<?= $consultNoticeType === 'success' ? 'background:#dcfce7;color:#166534;border:1px solid #bbf7d0' : 'background:#fee2e2;color:#991b1b;border:1px solid #fecaca' ?>">
+                        <i class="fa-solid <?= $consultNoticeType === 'success' ? 'fa-circle-check' : 'fa-circle-exclamation' ?>" style="margin-right:6px"></i>
+                        <?= htmlspecialchars($consultNotice) ?>
+                    </div>
+                <?php endif; ?>
+
+                <?php if (!$isUserLoggedIn): ?>
+                    <!-- TAMPILAN BELUM LOGIN -->
+                    <div style="text-align:center;padding:24px 10px">
+                        <div style="width:56px;height:56px;border-radius:50%;background:#f0fdf4;color:var(--green);display:inline-flex;align-items:center;justify-content:center;font-size:24px;margin-bottom:14px">
+                            <i class="fa-solid fa-comments"></i>
                         </div>
-                        <div class="form-group">
-                            <label>Nama Usaha / Brand</label>
-                            <input class="form-control" type="text" placeholder="Nama usaha" required>
-                        </div>
-                        <div class="form-group">
-                            <label>Nomor Kontak</label>
-                            <input class="form-control" type="tel" placeholder="08xxxxxxxxxx" required>
-                        </div>
-                        <div class="form-group">
-                            <label>Layanan yang Dipertimbangkan</label>
-                            <select class="form-control">
-                                <option value="">Pilih layanan</option>
-                                <option>Starter Branding</option>
-                                <option>E-Commerce Grow</option>
-                                <option>Full Marketing Scale</option>
-                                <option>Belum tahu / ingin direkomendasikan</option>
-                            </select>
-                        </div>
-                        <div class="form-group full">
-                            <label>Kendala / Kebutuhan Usaha</label>
-                            <textarea class="form-control" placeholder="Contoh: sudah punya Instagram tetapi belum memiliki website dan ingin memperluas pasar..."></textarea>
+                        <h3 style="margin-bottom:8px">Masuk untuk Memulai Konsultasi</h3>
+                        <p style="font-size:13px;color:var(--muted);line-height:1.6;margin-bottom:20px">
+                            Layanan konsultasi Balla’ Fresh terhubung langsung dengan sistem tiket dan ruang konsultasi privat di profil akun Anda.
+                        </p>
+                        <div style="display:flex;gap:10px;justify-content:center">
+                            <a href="login.php" class="btn btn-primary" style="padding:10px 22px">Masuk Akun</a>
+                            <a href="register.php" class="btn btn-outline" style="padding:10px 22px">Daftar Mitra</a>
                         </div>
                     </div>
-                    <button class="btn btn-primary form-submit" type="submit">Kirim Permintaan Konsultasi <i class="fa-solid fa-arrow-right"></i></button>
-                </form>
+
+                <?php elseif ($userLatestConsultation && $userLatestConsultation['status'] === 'pending'): ?>
+                    <!-- STATUS: MENUNGGU ACC ADMIN -->
+                    <div style="border:1.5px dashed #f59e0b;background:#fffdf7;padding:22px;border-radius:14px">
+                        <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
+                            <div style="width:40px;height:40px;border-radius:10px;background:#fef3c7;color:#d97706;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">
+                                <i class="fa-solid fa-hourglass-half"></i>
+                            </div>
+                            <div>
+                                <span style="font-size:10.5px;font-weight:800;color:#d97706;text-transform:uppercase;letter-spacing:0.5px">Tiket Konsultasi #<?= (int)$userLatestConsultation['id'] ?></span>
+                                <h4 style="margin:0;font-size:15px;color:#92400e">Menunggu Persetujuan (ACC) Admin</h4>
+                            </div>
+                        </div>
+                        <p style="font-size:12.5px;color:#78350f;line-height:1.5;margin-bottom:14px">
+                            Permintaan konsultasi Anda untuk topik <strong><?= htmlspecialchars($userLatestConsultation['category']) ?></strong> telah terkirim dan sedang ditinjau oleh admin Balla’ Fresh. Ruang obrolan dapat digunakan segera setelah disetujui.
+                        </p>
+                        <a href="profil.php?view=consultation#chatRoomSection" class="btn btn-primary" style="width:100%;justify-content:center;display:inline-flex;align-items:center;gap:8px">
+                            <i class="fa-solid fa-comments"></i> Pantau Status di Profil <i class="fa-solid fa-arrow-right"></i>
+                        </a>
+                    </div>
+
+                <?php elseif ($userLatestConsultation && $userLatestConsultation['status'] === 'approved'): ?>
+                    <!-- STATUS: SEDANG BERLANGSUNG -->
+                    <div style="border:1.5px solid #86efac;background:#f0fdf4;padding:22px;border-radius:14px">
+                        <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
+                            <div style="width:40px;height:40px;border-radius:10px;background:#dcfce7;color:#16a34a;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0">
+                                <i class="fa-solid fa-comment-dots"></i>
+                            </div>
+                            <div>
+                                <span style="font-size:10.5px;font-weight:800;color:#16a34a;text-transform:uppercase;letter-spacing:0.5px">Sesi Konsultasi Aktif #<?= (int)$userLatestConsultation['id'] ?></span>
+                                <h4 style="margin:0;font-size:15px;color:#14532d">Room Chat Terhubung ke Konsultan</h4>
+                            </div>
+                        </div>
+                        <p style="font-size:12.5px;color:#166534;line-height:1.5;margin-bottom:14px">
+                            Sesi konsultasi Anda untuk topik <strong><?= htmlspecialchars($userLatestConsultation['category']) ?></strong> sedang aktif. Anda dapat langsung berkirim pesan dan dokumen dengan konsultan kami.
+                        </p>
+                        <a href="profil.php?view=consultation&amp;chat_id=<?= (int)$userLatestConsultation['id'] ?>#chatRoomSection" class="btn btn-primary" style="width:100%;justify-content:center;display:inline-flex;align-items:center;gap:8px">
+                            <i class="fa-solid fa-comments"></i> Masuk ke Room Chat Sekarang <i class="fa-solid fa-arrow-right"></i>
+                        </a>
+                    </div>
+
+                <?php else: ?>
+                    <!-- STATUS: BELUM ADA / SELESAI (BISA AJUKAN BARU) -->
+                    <h3>Formulir Konsultasi Mitra</h3>
+                    <form method="post" action="#konsultasi">
+                        <input type="hidden" name="action" value="submit_home_consultation">
+                        <div class="form-grid">
+                            <div class="form-group">
+                                <label>Nama Pemilik Usaha</label>
+                                <input class="form-control" type="text" name="client_name" value="<?= htmlspecialchars($currentUser['name'] ?? '') ?>" placeholder="Nama Anda" required>
+                            </div>
+                            <div class="form-group">
+                                <label>Nama Usaha / Brand</label>
+                                <input class="form-control" type="text" name="business_name" value="<?= htmlspecialchars($currentUser['business_name'] ?? '') ?>" placeholder="Nama usaha">
+                            </div>
+                            <div class="form-group">
+                                <label>Nomor Kontak</label>
+                                <input class="form-control" type="tel" name="phone" value="<?= htmlspecialchars($currentUser['phone'] ?? '') ?>" placeholder="08xxxxxxxxxx" required>
+                            </div>
+                            <div class="form-group">
+                                <label>Layanan yang Dipertimbangkan</label>
+                                <select class="form-control" name="category" required>
+                                    <option value="Starter Branding">Starter Branding</option>
+                                    <option value="E-Commerce Grow">E-Commerce Grow</option>
+                                    <option value="Full Marketing Scale">Full Marketing Scale</option>
+                                    <option value="Belum tahu / ingin direkomendasikan">Belum tahu / ingin direkomendasikan</option>
+                                </select>
+                            </div>
+                            <div class="form-group full">
+                                <label>Kendala / Kebutuhan Usaha</label>
+                                <textarea class="form-control" name="notes" placeholder="Contoh: sudah punya Instagram tetapi belum memiliki website dan ingin memperluas pasar..." required></textarea>
+                            </div>
+                        </div>
+                        <button class="btn btn-primary form-submit" type="submit">Kirim Permintaan Konsultasi <i class="fa-solid fa-arrow-right"></i></button>
+                    </form>
+                <?php endif; ?>
             </div>
         </div>
     </div>
@@ -1294,6 +2583,7 @@ body.logged-in .auth-only-section {
             <div>
                 <h4>Jelajahi</h4>
                 <div class="footer-links">
+                    <a href="#tentang-kami">Tentang Kami</a>
                     <a href="#solusi">Solusi</a>
                     <a href="#layanan">Layanan</a>
                     <a href="#portfolio">Portofolio</a>
@@ -1304,7 +2594,8 @@ body.logged-in .auth-only-section {
                 <h4>Hubungi</h4>
                 <div class="footer-links">
                     <a href="#konsultasi">Konsultasi Mitra</a>
-                    <a href="mailto:info@ballafresh.com">Email</a>
+                    <a href="mailto:<?= htmlspecialchars($siteContent['contact_email'] ?? 'ballafresh01@gmail.com') ?>"><?= htmlspecialchars($siteContent['contact_email'] ?? 'ballafresh01@gmail.com') ?></a>
+                    <a href="https://wa.me/<?= preg_replace('/\D/', '', $siteContent['contact_phone'] ?? '081213725107') ?>" target="_blank">WhatsApp: <?= htmlspecialchars($siteContent['contact_phone'] ?? '081213725107') ?></a>
                 </div>
             </div>
         </div>
@@ -1340,6 +2631,8 @@ function saveCart() {
 }
 
 /* Memuat layanan dari database */
+
+const isUserLoggedIn = <?= json_encode($isUserLoggedIn) ?>;
 
 async function loadServices() {
     const container = document.getElementById("services-container");
@@ -1405,6 +2698,30 @@ async function loadServices() {
             const image = service.image || sampleImages[category]?.[imageIndex] || sampleImages[category]?.[0] || sampleImages.branding[0];
             const features = String(service.features || "").split("|").map(x => x.trim()).filter(Boolean);
 
+            const actionBottomHtml = isUserLoggedIn ? `
+                <div class="price"><small>Mulai dari</small><strong>${formatMoney(price)}</strong></div>
+                <div class="service-card-actions">
+                    <a href="detail_layanan.php?id=${encodeURIComponent(service.id)}" class="btn-detail-link" onclick="event.stopPropagation()">
+                        Detail <i class="fa-solid fa-arrow-right"></i>
+                    </a>
+                    <button class="add-btn" type="button" onclick="addToCart(this, event)"
+                            aria-label="Tambah ${escapeHTML(service.name)} ke keranjang">
+                        <i class="fa-solid fa-plus"></i>
+                    </button>
+                </div>` : `
+                <div class="price price-locked">
+                    <span class="lock-badge"><i class="fa-solid fa-lock"></i> Harga Khusus Mitra</span>
+                    <small>Login untuk melihat penawaran</small>
+                </div>
+                <div class="service-card-actions">
+                    <a href="detail_layanan.php?id=${encodeURIComponent(service.id)}" class="btn-detail-link" onclick="event.stopPropagation()">
+                        Detail <i class="fa-solid fa-arrow-right"></i>
+                    </a>
+                    <a href="login.php" class="btn-lock-login" onclick="event.stopPropagation()" title="Login untuk memesan">
+                        <i class="fa-solid fa-lock"></i> Pesan
+                    </a>
+                </div>`;
+
             return `
                 <article class="service-card"
                     data-id="${escapeHTML(service.id)}"
@@ -1425,16 +2742,7 @@ async function loadServices() {
                     </ul>` : ""}
                     <div class="service-duration"><i class="fa-regular fa-clock"></i> Estimasi: ${escapeHTML(duration)}</div>
                     <div class="service-bottom">
-                        <div class="price"><small>Mulai dari</small><strong>${formatMoney(price)}</strong></div>
-                        <div class="service-card-actions">
-                            <a href="detail_layanan.php?id=${encodeURIComponent(service.id)}" class="btn-detail-link" onclick="event.stopPropagation()">
-                                Detail <i class="fa-solid fa-arrow-right"></i>
-                            </a>
-                            <button class="add-btn" type="button" onclick="addToCart(this, event)"
-                                    aria-label="Tambah ${escapeHTML(service.name)} ke keranjang">
-                                <i class="fa-solid fa-plus"></i>
-                            </button>
-                        </div>
+                        ${actionBottomHtml}
                     </div>
                 </article>`;
         }).join("");
@@ -1446,7 +2754,7 @@ async function loadServices() {
     }
 }
 function handleCardClick(event, id) {
-    if (event && (event.target.closest('.add-btn') || event.target.closest('.btn-detail-link') || event.target.closest('a'))) {
+    if (event && (event.target.closest('.add-btn') || event.target.closest('.btn-detail-link') || event.target.closest('.btn-lock-login') || event.target.closest('a'))) {
         return;
     }
     window.location.href = `detail_layanan.php?id=${encodeURIComponent(id)}`;
@@ -1457,8 +2765,13 @@ function addToCart(button, event) {
     if (event) {
         event.stopPropagation();
     }
-    const card = button.closest(".service-card");
+    if (!isUserLoggedIn) {
+        showToast("Silakan login terlebih dahulu untuk memesan layanan.", "info");
+        setTimeout(() => { window.location.href = "login.php"; }, 1000);
+        return;
+    }
 
+    const card = button ? button.closest(".service-card") : null;
     if (!card) return;
 
     const item = {
@@ -1667,16 +2980,7 @@ document.querySelectorAll(".nav-link").forEach(link => {
     });
 });
 
-/* Form konsultasi */
-document.getElementById("consultForm")?.addEventListener("submit", e => {
-    e.preventDefault();
 
-    showToast(
-        "Permintaan konsultasi berhasil dikirim. Tim Balla’ Fresh akan meninjau kebutuhan Anda."
-    );
-
-    e.target.reset();
-});
 
 /* Checkout */
 document.getElementById("cartCheckout")?.addEventListener("click", () => {
@@ -1701,10 +3005,17 @@ window.addEventListener("scroll", () => {
         if (y >= sec.offsetTop) current = sec.id;
     });
 
+    const navMap = {
+        'solusi': 'tentang-kami',
+        'alur': 'layanan',
+        'artikel-preview': 'layanan'
+    };
+    const targetId = navMap[current] || current;
+
     links.forEach(link => {
         link.classList.toggle(
             "active",
-            link.getAttribute("href") === "#" + current
+            link.getAttribute("href") === "#" + targetId
         );
     });
 });

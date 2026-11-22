@@ -1,8 +1,11 @@
 <?php
 declare(strict_types=1);
 
+date_default_timezone_set('Asia/Makassar');
+
 session_start();
 require_once __DIR__ . '/db.php';
+require_once __DIR__ . '/midtrans_config.php';
 // Token keamanan untuk proses logout admin.
 if (empty($_SESSION['admin_logout_csrf'])) {
     $_SESSION['admin_logout_csrf'] = bin2hex(random_bytes(32));
@@ -24,7 +27,7 @@ $adminName = (string) ($_SESSION['admin_name'] ?? 'Administrator');
 $adminEmail = '';
 
 $page = (string) ($_GET['page'] ?? 'dashboard');
-$allowedPages = ['dashboard', 'orders', 'customers', 'activity', 'agency'];
+$allowedPages = ['dashboard', 'orders', 'customers', 'businesses', 'consultations', 'activity', 'agency', 'articles', 'settings'];
 if (!in_array($page, $allowedPages, true)) {
     $page = 'dashboard';
 }
@@ -32,8 +35,12 @@ $pageTitles = [
     'dashboard' => 'Dashboard',
     'orders' => 'Pengelolaan Pesanan',
     'customers' => 'Data Pelanggan',
+    'businesses' => 'Data Usaha Mitra',
+    'consultations' => 'Konsultasi & Room Chat',
     'activity' => 'Aktivitas Terbaru',
-    'agency' => 'Operasional Agency'
+    'agency' => 'Operasional Agency',
+    'articles' => 'Kelola Artikel & Edukasi',
+    'settings' => 'Pengaturan & Kebijakan'
 ];
 $pageTitle = $pageTitles[$page];
 
@@ -45,7 +52,7 @@ if (empty($_SESSION['order_status_csrf'])) {
 $orderActionMessage = '';
 $orderActionType = 'success';
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'update_order_status') {
+if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && ($_POST['action'] ?? '') === 'update_order_status') {
     $postedToken = (string) ($_POST['csrf'] ?? '');
     $orderId = filter_var($_POST['order_id'] ?? null, FILTER_VALIDATE_INT);
     $newStatus = (string) ($_POST['status'] ?? '');
@@ -103,28 +110,205 @@ if ($stmt) {
     $_SESSION['admin_is_owner'] = (int) $adminRow['is_owner'];
 }
 
-function e(mixed $value): string {
-    return htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8');
-}
-
-function scalarQuery(mysqli $conn, string $sql): int {
-    $result = $conn->query($sql);
-    if (!$result) {
-        return 0;
+if (!function_exists('e')) {
+    function e(mixed $value): string {
+        return htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8');
     }
-    $row = $result->fetch_row();
-    return (int) ($row[0] ?? 0);
 }
 
-function tableColumns(mysqli $conn, string $table): array {
-    $allowed = ['users', 'user_addresses', 'agency_site_content', 'agency_services', 'services', 'categories', 'service_reviews'];
-    if (!in_array($table, $allowed, true)) return [];
-    $result = $conn->query("SHOW COLUMNS FROM `{$table}`");
-    if (!$result) return [];
-    $columns = [];
-    while ($row = $result->fetch_assoc()) $columns[] = (string) $row['Field'];
-    $result->free();
-    return $columns;
+if (!function_exists('scalarQuery')) {
+    function scalarQuery(mysqli $conn, string $sql): int {
+        $result = $conn->query($sql);
+        if (!$result) {
+            return 0;
+        }
+        $row = $result->fetch_row();
+        return (int) ($row[0] ?? 0);
+    }
+}
+
+if (!function_exists('tableColumns')) {
+    function tableColumns(mysqli $conn, string $table): array {
+        $allowed = ['users', 'user_addresses', 'agency_site_content', 'agency_services', 'services', 'categories', 'service_reviews'];
+        if (!in_array($table, $allowed, true)) return [];
+        $result = $conn->query("SHOW COLUMNS FROM `{$table}`");
+        if (!$result) return [];
+        $columns = [];
+        while ($row = $result->fetch_assoc()) $columns[] = (string) $row['Field'];
+        $result->free();
+        return $columns;
+    }
+}
+
+if (!function_exists('formatChatBytes')) {
+    function formatChatBytes(int $bytes): string {
+        if ($bytes >= 1048576) {
+            return number_format($bytes / 1048576, 1) . ' MB';
+        }
+        if ($bytes >= 1024) {
+            return number_format($bytes / 1024, 0) . ' KB';
+        }
+        return $bytes . ' B';
+    }
+}
+
+if (!function_exists('parseChatAttachments')) {
+    function parseChatAttachments(string $rawMessage): array {
+        $lines = preg_split('/\r\n|\r|\n/', $rawMessage) ?: [];
+        $plainLines = [];
+        $attachments = [];
+        $pendingName = '';
+
+        foreach ($lines as $line) {
+            $trimmed = trim($line);
+            if (preg_match('/^\[Lampiran\]\s*(.+)$/i', $trimmed, $mName)) {
+                $pendingName = trim($mName[1]);
+                continue;
+            }
+            if (preg_match('/^URL:\s*(https?:\/\/[^\s]+)$/i', $trimmed, $mUrl)) {
+                $url = trim($mUrl[1]);
+                $path = (string) parse_url($url, PHP_URL_PATH);
+                if (strpos($path, 'uploads/chat_attachments/') !== false || strpos($url, 'uploads/chat_attachments/') !== false) {
+                    $ext = strtolower(pathinfo($path ?: $url, PATHINFO_EXTENSION));
+                    $displayName = $pendingName ?: basename($path ?: $url);
+
+                    $fileSizeFormatted = '';
+                    $cleanPath = ltrim((string)strstr($path ?: $url, 'uploads/chat_attachments/'), '/');
+                    $localPath = __DIR__ . '/' . $cleanPath;
+                    if (is_file($localPath)) {
+                        $bytes = filesize($localPath);
+                        $fileSizeFormatted = formatChatBytes((int)$bytes);
+                    }
+
+                    $attachments[] = [
+                        'url' => $url,
+                        'name' => $displayName,
+                        'ext' => $ext,
+                        'size' => $fileSizeFormatted
+                    ];
+                }
+                $pendingName = '';
+                continue;
+            }
+            if ($pendingName !== '') {
+                $plainLines[] = '[Lampiran] ' . $pendingName;
+                $pendingName = '';
+            }
+            $plainLines[] = $line;
+        }
+
+        if ($pendingName !== '') {
+            $plainLines[] = '[Lampiran] ' . $pendingName;
+        }
+
+        $plainText = trim(implode("\n", $plainLines));
+        return [
+            'text' => $plainText,
+            'attachments' => $attachments
+        ];
+    }
+}
+
+if (!function_exists('autoLinkUrls')) {
+    function autoLinkUrls(string $escapedHtml): string {
+        $pattern = '~(https?://[^\s<]+|www\.[^\s<]+)~i';
+        return preg_replace_callback($pattern, function($match) {
+            $url = $match[1];
+            $href = (stripos($url, 'http') === 0) ? $url : 'https://' . $url;
+            return '<a href="' . $href . '" target="_blank" rel="noopener noreferrer" style="color:inherit;text-decoration:underline;font-weight:700;word-break:break-all">' . $url . '</a>';
+        }, $escapedHtml);
+    }
+}
+
+if (!function_exists('sanitizeArticleHtml')) {
+    function sanitizeArticleHtml(string $html): string {
+        if (trim($html) === '') return '';
+
+        // 1. Bersihkan tag skrip dan elemen berbahaya
+        $html = preg_replace('#<(script|iframe|object|embed|form|input|button|textarea|select|style|link|applet|meta)[^>]*?>.*?</\1>#si', '', $html);
+        $html = preg_replace('#<(script|iframe|object|embed|form|input|button|textarea|select|style|link|applet|meta)[^>]*?>#si', '', $html);
+
+        // 2. Bersihkan atribut event handler inline (onclick, onerror, onload, dll.)
+        $html = preg_replace('#\s+on[a-zA-Z]+\s*=\s*("[^"]*"|\'[^\']*\'|[^\s>]+)#i', '', $html);
+
+        // 3. Bersihkan protokol palsu (javascript:, vbscript:)
+        $html = preg_replace('#\b(href|src)\s*=\s*["\']\s*(javascript|vbscript):[^"\']*["\']#i', '$1="#"', $html);
+
+        // 4. Izinkan hanya tag pemformatan yang aman
+        $allowedTags = '<h1><h2><h3><h4><h5><h6><p><br><strong><b><em><i><u><s><strike><del><ul><ol><li><blockquote><a><span><div><img><table><thead><tbody><tr><th><td><hr>';
+        $clean = strip_tags($html, $allowedTags);
+
+        // 5. Filter atribut pada tag yang diizinkan (style, href, src, alt, title)
+        $clean = preg_replace_callback('#<([a-z1-6]+)([^>]*)>#i', function($matches) {
+            $tag = strtolower($matches[1]);
+            $attrs = $matches[2];
+
+            if (trim($attrs) === '') {
+                return "<{$tag}>";
+            }
+
+            $safeAttrs = [];
+
+            // Atribut style: hanya izinkan properti pemformatan teks yang aman
+            if (preg_match('#\bstyle\s*=\s*["\']([^"\']*)["\']#i', $attrs, $mStyle)) {
+                $styleVal = $mStyle[1];
+                $declarations = explode(';', $styleVal);
+                $safeDecls = [];
+                $allowedProps = ['font-size', 'text-align', 'color', 'background-color', 'font-weight', 'text-decoration', 'line-height', 'margin', 'padding'];
+                foreach ($declarations as $decl) {
+                    $decl = trim($decl);
+                    if ($decl === '') continue;
+                    $parts = explode(':', $decl, 2);
+                    if (count($parts) === 2) {
+                        $prop = strtolower(trim($parts[0]));
+                        $val = trim($parts[1]);
+                        if (in_array($prop, $allowedProps, true)) {
+                            if (!preg_match('#(expression|url|javascript|behavior|import)#i', $val)) {
+                                $safeDecls[] = "{$prop}: {$val}";
+                            }
+                        }
+                    }
+                }
+                if (!empty($safeDecls)) {
+                    $safeAttrs[] = 'style="' . htmlspecialchars(implode('; ', $safeDecls), ENT_QUOTES, 'UTF-8') . '"';
+                }
+            }
+
+            // Atribut tautan pada <a>
+            if ($tag === 'a') {
+                if (preg_match('#\bhref\s*=\s*["\']([^"\']*)["\']#i', $attrs, $mHref)) {
+                    $href = trim($mHref[1]);
+                    if (preg_match('#^(https?://|mailto:|tel:|#|/)#i', $href)) {
+                        $safeAttrs[] = 'href="' . htmlspecialchars($href, ENT_QUOTES, 'UTF-8') . '"';
+                        $safeAttrs[] = 'target="_blank"';
+                        $safeAttrs[] = 'rel="noopener noreferrer"';
+                    }
+                }
+                if (preg_match('#\btitle\s*=\s*["\']([^"\']*)["\']#i', $attrs, $mTitle)) {
+                    $safeAttrs[] = 'title="' . htmlspecialchars($mTitle[1], ENT_QUOTES, 'UTF-8') . '"';
+                }
+            }
+
+            // Atribut gambar pada <img>
+            if ($tag === 'img') {
+                if (preg_match('#\bsrc\s*=\s*["\']([^"\']*)["\']#i', $attrs, $mSrc)) {
+                    $src = trim($mSrc[1]);
+                    if (preg_match('#^(https?://|uploads/|/)#i', $src)) {
+                        $safeAttrs[] = 'src="' . htmlspecialchars($src, ENT_QUOTES, 'UTF-8') . '"';
+                    }
+                }
+                if (preg_match('#\balt\s*=\s*["\']([^"\']*)["\']#i', $attrs, $mAlt)) {
+                    $safeAttrs[] = 'alt="' . htmlspecialchars($mAlt[1], ENT_QUOTES, 'UTF-8') . '"';
+                }
+                $safeAttrs[] = 'loading="lazy"';
+            }
+
+            $attrString = !empty($safeAttrs) ? ' ' . implode(' ', $safeAttrs) : '';
+            return "<{$tag}{$attrString}>";
+        }, $clean);
+
+        return $clean;
+    }
 }
 
 $customerCount = scalarQuery($conn, 'SELECT COUNT(*) FROM users');
@@ -167,7 +351,30 @@ foreach (['address_details', 'street', 'address', 'subdistrict', 'district', 'ci
         $addressSelects[] = "NULL AS `{$column}`";
     }
 }
-$customerSql = "SELECT u.id, u.name, u.email, {$phoneSelect}, {$createdSelect}, " .
+$extraUserCols = [
+    'profile_image' => 'profile_image',
+    'birth_date' => 'birth_date',
+    'business_name' => 'business_name',
+    'business_type' => 'business_type',
+    'business_role' => 'business_role',
+    'social_media' => 'social_media',
+    'website_url' => 'website_url',
+    'business_address' => 'business_address',
+    'business_description' => 'business_description',
+    'service_preferences' => 'service_preferences'
+];
+$extraUserSelects = [];
+foreach ($extraUserCols as $k => $alias) {
+    if (in_array($k, $userColumns, true)) {
+        $extraUserSelects[] = "u.`{$k}` AS `{$alias}`";
+    } else {
+        $extraUserSelects[] = "NULL AS `{$alias}`";
+    }
+}
+$userAddressCol = in_array('address', $userColumns, true) ? "u.`address` AS user_direct_address" : "NULL AS user_direct_address";
+
+$customerSql = "SELECT u.id, u.name, u.email, {$phoneSelect}, {$createdSelect}, {$userAddressCol}, " .
+    implode(', ', $extraUserSelects) . ", " .
     implode(', ', $addressSelects) . " FROM users u";
 if ($addressTableExists) $customerSql .= " LEFT JOIN user_addresses a ON a.user_id = u.id";
 $searchWhere = '';
@@ -202,13 +409,14 @@ if ($page === 'customers' && ($_GET['export'] ?? '') === 'customers') {
     header('Expires: 0');
     $output = fopen('php://output', 'w');
     fwrite($output, "\xEF\xBB\xBF");
-    fputcsv($output, ['ID', 'Nama Lengkap', 'Email', 'Nomor HP', 'Detail Alamat', 'RT/RW', 'Kelurahan/Kecamatan', 'Kota', 'Provinsi', 'Kode Pos', 'Tanggal Daftar']);
+    fputcsv($output, ['ID', 'Nama Lengkap', 'Email', 'Nomor HP', 'Tanggal Lahir', 'Nama Usaha', 'Bidang Usaha', 'Jabatan/Posisi', 'Detail Alamat', 'RT/RW', 'Kelurahan/Kecamatan', 'Kota', 'Provinsi', 'Kode Pos', 'Tanggal Daftar']);
     foreach ($customers as $customer) {
         $address = trim(implode(', ', array_filter([
-            $customer['address_details'] ?? '', $customer['street'] ?? '', $customer['address'] ?? ''
+            $customer['address_details'] ?? '', $customer['street'] ?? '', $customer['address'] ?? '', $customer['user_direct_address'] ?? ''
         ], static fn($value) => trim((string) $value) !== '')));
         fputcsv($output, [
             $customer['id'], $customer['name'], $customer['email'], $customer['phone'] ?? '',
+            $customer['birth_date'] ?? '', $customer['business_name'] ?? '', $customer['business_type'] ?? '', $customer['business_role'] ?? '',
             $address, $customer['rt_rw'] ?? '', $customer['subdistrict'] ?? ($customer['district'] ?? ''),
             $customer['city'] ?? '', $customer['province'] ?? '',
             $customer['postal_code'] ?? '', $customer['registered_at'] ?? ''
@@ -230,7 +438,40 @@ if ($stmt) {
 }
 
 
-// Ringkasan dan daftar pesanan dari tabel orders, customers, dan order_items.
+// Parameter filter periode dan status untuk pengelolaan pesanan
+$statusFilter = strtolower(trim((string)($_GET['status'] ?? 'all')));
+$periodFilter = strtolower(trim((string)($_GET['period'] ?? 'all')));
+
+$allowedStatusFilters = ['all', 'pending', 'processing', 'completed', 'cancelled', 'paid', 'unpaid'];
+if (!in_array($statusFilter, $allowedStatusFilters, true)) {
+    $statusFilter = 'all';
+}
+
+$allowedPeriodFilters = ['all', 'today', 'this_week', 'this_month', 'this_year'];
+if (!in_array($periodFilter, $allowedPeriodFilters, true)) {
+    $periodFilter = 'all';
+}
+
+// Hitung rentang tanggal periode dalam zona waktu Asia/Makassar
+$nowMakassar = new DateTime('now', new DateTimeZone('Asia/Makassar'));
+$periodStart = null;
+$periodEnd = null;
+
+if ($periodFilter === 'today') {
+    $periodStart = (clone $nowMakassar)->format('Y-m-d 00:00:00');
+    $periodEnd   = (clone $nowMakassar)->format('Y-m-d 23:59:59');
+} elseif ($periodFilter === 'this_week') {
+    $periodStart = (clone $nowMakassar)->modify('monday this week')->setTime(0, 0, 0)->format('Y-m-d H:i:s');
+    $periodEnd   = (clone $nowMakassar)->modify('sunday this week')->setTime(23, 59, 59)->format('Y-m-d H:i:s');
+} elseif ($periodFilter === 'this_month') {
+    $periodStart = (clone $nowMakassar)->format('Y-m-01 00:00:00');
+    $periodEnd   = (clone $nowMakassar)->format('Y-m-t 23:59:59');
+} elseif ($periodFilter === 'this_year') {
+    $periodStart = (clone $nowMakassar)->format('Y-01-01 00:00:00');
+    $periodEnd   = (clone $nowMakassar)->format('Y-12-31 23:59:59');
+}
+
+// Ringkasan statistik pesanan (mengikuti periode yang dipilih jika aktif)
 $orderCounts = [
     'all' => 0,
     'pending' => 0,
@@ -238,19 +479,63 @@ $orderCounts = [
     'completed' => 0,
     'cancelled' => 0
 ];
-$orderStatsResult = $conn->query(
-    "SELECT status, COUNT(*) AS total FROM orders GROUP BY status"
-);
-if ($orderStatsResult) {
-    while ($stat = $orderStatsResult->fetch_assoc()) {
-        $statusKey = (string) $stat['status'];
-        if (array_key_exists($statusKey, $orderCounts)) {
-            $orderCounts[$statusKey] = (int) $stat['total'];
+
+if ($periodStart !== null && $periodEnd !== null) {
+    $statStmt = $conn->prepare("SELECT status, COUNT(*) AS total FROM orders WHERE created_at BETWEEN ? AND ? GROUP BY status");
+    if ($statStmt) {
+        $statStmt->bind_param("ss", $periodStart, $periodEnd);
+        $statStmt->execute();
+        $statRes = $statStmt->get_result();
+        while ($stat = $statRes->fetch_assoc()) {
+            $statusKey = (string) $stat['status'];
+            if (array_key_exists($statusKey, $orderCounts)) {
+                $orderCounts[$statusKey] = (int) $stat['total'];
+            }
+            $orderCounts['all'] += (int) $stat['total'];
         }
-        $orderCounts['all'] += (int) $stat['total'];
+        $statStmt->close();
     }
-    $orderStatsResult->free();
+} else {
+    $orderStatsResult = $conn->query("SELECT status, COUNT(*) AS total FROM orders GROUP BY status");
+    if ($orderStatsResult) {
+        while ($stat = $orderStatsResult->fetch_assoc()) {
+            $statusKey = (string) $stat['status'];
+            if (array_key_exists($statusKey, $orderCounts)) {
+                $orderCounts[$statusKey] = (int) $stat['total'];
+            }
+            $orderCounts['all'] += (int) $stat['total'];
+        }
+        $orderStatsResult->free();
+    }
 }
+
+// Susun Query Daftar Pesanan dengan Filter Status & Periode
+$whereClauses = [];
+$bindTypes = "";
+$bindValues = [];
+
+if ($statusFilter !== 'all') {
+    if ($statusFilter === 'paid') {
+        $whereClauses[] = "o.payment_status IN ('settlement', 'capture', 'lunas')";
+    } elseif ($statusFilter === 'unpaid') {
+        $whereClauses[] = "(o.payment_status IN ('menunggu_pembayaran', 'pending') OR o.payment_status IS NULL)";
+    } elseif ($statusFilter === 'pending') {
+        $whereClauses[] = "(o.status = 'pending' OR o.payment_status IN ('menunggu_pembayaran', 'pending'))";
+    } elseif (in_array($statusFilter, ['processing', 'completed', 'cancelled'], true)) {
+        $whereClauses[] = "o.status = ?";
+        $bindTypes .= "s";
+        $bindValues[] = $statusFilter;
+    }
+}
+
+if ($periodStart !== null && $periodEnd !== null) {
+    $whereClauses[] = "o.created_at BETWEEN ? AND ?";
+    $bindTypes .= "ss";
+    $bindValues[] = $periodStart;
+    $bindValues[] = $periodEnd;
+}
+
+$whereSql = !empty($whereClauses) ? "WHERE " . implode(" AND ", $whereClauses) : "";
 
 $orders = [];
 $orderQuery = "
@@ -261,6 +546,22 @@ $orderQuery = "
         o.total_amount,
         o.status,
         o.notes,
+        o.payment_method,
+        o.payment_type,
+        o.snap_token,
+        o.midtrans_transaction_id,
+        o.transaction_status,
+        o.payment_status,
+        o.transaction_time,
+        o.settlement_time,
+        o.business_name,
+        o.social_media,
+        o.website_url,
+        o.payment_code,
+        o.biller_code,
+        o.qr_url,
+        o.deeplink_url,
+        o.expiry_time,
         o.created_at,
         c.name AS customer_name,
         c.email AS customer_email,
@@ -268,50 +569,146 @@ $orderQuery = "
         c.address AS customer_address,
         COALESCE(SUM(oi.quantity), 0) AS total_quantity,
         GROUP_CONCAT(
-            CONCAT(oi.service_name, ' (', oi.quantity, 'x)')
+            CONCAT(oi.service_name, '::', oi.quantity, '::', oi.unit_price, '::', oi.subtotal)
             ORDER BY oi.id ASC SEPARATOR '||'
-        ) AS ordered_services
+        ) AS ordered_services_detail
     FROM orders o
     INNER JOIN customers c ON c.id = o.customer_id
     LEFT JOIN order_items oi ON oi.order_id = o.id
+    {$whereSql}
     GROUP BY
         o.id, o.order_number, o.customer_id, o.total_amount, o.status,
-        o.notes, o.created_at, c.name, c.email, c.phone, c.address
+        o.notes, o.payment_method, o.payment_type, o.snap_token, o.midtrans_transaction_id,
+        o.transaction_status, o.payment_status, o.transaction_time, o.settlement_time,
+        o.business_name, o.social_media, o.website_url,
+        o.payment_code, o.biller_code, o.qr_url, o.deeplink_url, o.expiry_time, o.created_at,
+        c.name, c.email, c.phone, c.address
     ORDER BY o.created_at DESC, o.id DESC
-    LIMIT 100
+    LIMIT 200
 ";
-$orderResult = $conn->query($orderQuery);
+
 $orderLoadError = '';
-if ($orderResult) {
-    while ($row = $orderResult->fetch_assoc()) {
-        $orders[] = $row;
+if (!empty($bindValues)) {
+    $stmtOrders = $conn->prepare($orderQuery);
+    if ($stmtOrders) {
+        $stmtOrders->bind_param($bindTypes, ...$bindValues);
+        $stmtOrders->execute();
+        $orderResult = $stmtOrders->get_result();
+        while ($row = $orderResult->fetch_assoc()) {
+            $orders[] = $row;
+        }
+        $stmtOrders->close();
+    } else {
+        $orderLoadError = 'Gagal memuat pesanan dengan filter: ' . $conn->error;
     }
-    $orderResult->free();
 } else {
-    $orderLoadError = 'Data pesanan belum dapat dimuat. Pastikan tabel orders, customers, dan order_items memiliki struktur yang sesuai.';
+    $orderResult = $conn->query($orderQuery);
+    if ($orderResult) {
+        while ($row = $orderResult->fetch_assoc()) {
+            $orders[] = $row;
+        }
+        $orderResult->free();
+    } else {
+        $orderLoadError = 'Data pesanan belum dapat dimuat: ' . $conn->error;
+    }
 }
 
-function orderStatusLabel(string $status): string {
-    return [
-        'pending' => 'Menunggu',
-        'processing' => 'Diproses',
-        'completed' => 'Selesai',
-        'cancelled' => 'Dibatalkan'
-    ][$status] ?? ucfirst($status);
+if (!function_exists('orderStatusLabel')) {
+    function orderStatusLabel(string $status): string {
+        return [
+            'pending' => 'Menunggu',
+            'processing' => 'Diproses',
+            'completed' => 'Selesai',
+            'cancelled' => 'Dibatalkan'
+        ][$status] ?? ucfirst($status);
+    }
 }
 
-function orderStatusClass(string $status): string {
-    return [
-        'pending' => 'pending',
-        'processing' => 'processing',
-        'completed' => 'completed',
-        'cancelled' => 'cancelled'
-    ][$status] ?? 'pending';
+if (!function_exists('orderStatusClass')) {
+    function orderStatusClass(string $status): string {
+        return [
+            'pending' => 'pending',
+            'processing' => 'processing',
+            'completed' => 'completed',
+            'cancelled' => 'cancelled'
+        ][$status] ?? 'pending';
+    }
+}
+
+if (!function_exists('paymentStatusBadge')) {
+    function paymentStatusBadge(string $status): array {
+        $st = strtolower(trim($status));
+        if (in_array($st, ['settlement', 'capture', 'lunas'], true)) {
+            return ['class' => 'paid', 'label' => 'Pembayaran Berhasil', 'icon' => 'fa-circle-check'];
+        }
+        if (in_array($st, ['expire', 'expired'], true)) {
+            return ['class' => 'expired', 'label' => 'Kedaluwarsa', 'icon' => 'fa-triangle-exclamation'];
+        }
+        if (in_array($st, ['deny', 'cancel', 'cancelled', 'gagal'], true)) {
+            return ['class' => 'failed', 'label' => 'Pembayaran Gagal', 'icon' => 'fa-circle-xmark'];
+        }
+        return ['class' => 'pending', 'label' => 'Menunggu Pembayaran', 'icon' => 'fa-clock'];
+    }
+}
+
+if (!function_exists('getOrderDateGroupInfo')) {
+    function getOrderDateGroupInfo(string $datetimeStr): array {
+        $months = [
+            1 => 'Januari', 2 => 'Februari', 3 => 'Maret', 4 => 'April',
+            5 => 'Mei', 6 => 'Juni', 7 => 'Juli', 8 => 'Agustus',
+            9 => 'September', 10 => 'Oktober', 11 => 'November', 12 => 'Desember'
+        ];
+        $ts = strtotime($datetimeStr);
+        $ymd = date('Y-m-d', $ts);
+        $todayYmd = date('Y-m-d');
+        $yesterdayYmd = date('Y-m-d', strtotime('-1 day'));
+
+        $d = date('j', $ts);
+        $m = (int)date('n', $ts);
+        $y = date('Y', $ts);
+        $formattedDate = "{$d} " . strtoupper($months[$m] ?? '') . " {$y}";
+
+        if ($ymd === $todayYmd) {
+            return [
+                'key' => $ymd,
+                'title' => 'HARI INI · ' . $formattedDate,
+                'type' => 'today'
+            ];
+        } elseif ($ymd === $yesterdayYmd) {
+            return [
+                'key' => $ymd,
+                'title' => 'KEMARIN · ' . $formattedDate,
+                'type' => 'yesterday'
+            ];
+        } else {
+            return [
+                'key' => $ymd,
+                'title' => $formattedDate,
+                'type' => 'past'
+            ];
+        }
+    }
+}
+
+// Kelompokkan pesanan berdasarkan tanggal (Asia/Makassar)
+$groupedOrders = [];
+foreach ($orders as $order) {
+    $grp = getOrderDateGroupInfo((string)$order['created_at']);
+    $gKey = $grp['key'];
+    if (!isset($groupedOrders[$gKey])) {
+        $groupedOrders[$gKey] = [
+            'key' => $gKey,
+            'title' => $grp['title'],
+            'type' => $grp['type'],
+            'orders' => []
+        ];
+    }
+    $groupedOrders[$gKey]['orders'][] = $order;
 }
 
 
-// CMS ringan untuk mengelola konten website dari dashboard.
-// Tabel terpisah agar tidak mengubah struktur tabel transaksi yang sudah ada.
+// CMS untuk mengelola konten website per-section dari dashboard admin.
+// Pastikan tabel agency_site_content dan kolom-kolomnya lengkap.
 $conn->query("CREATE TABLE IF NOT EXISTS agency_site_content (
     id INT NOT NULL PRIMARY KEY,
     hero_title VARCHAR(255) NOT NULL DEFAULT '',
@@ -319,9 +716,61 @@ $conn->query("CREATE TABLE IF NOT EXISTS agency_site_content (
     contact_email VARCHAR(190) NULL,
     contact_phone VARCHAR(50) NULL,
     hero_image VARCHAR(255) NULL,
+    hero_tag VARCHAR(100) DEFAULT 'Digital Growth Partner',
+    about_tag VARCHAR(100) DEFAULT 'Tentang Balla’ Fresh',
+    about_title VARCHAR(255) DEFAULT 'Mendorong Kemandirian Petani & UMKM Hidroponik Rumahan',
+    about_story TEXT NULL,
+    about_problem TEXT NULL,
+    about_solution TEXT NULL,
+    about_image VARCHAR(255) NULL,
+    cta_title VARCHAR(255) DEFAULT 'Buka Seluruh Potensi Usaha Hidroponik Anda Sekarang',
+    cta_description TEXT NULL,
+    cta_badge VARCHAR(100) DEFAULT 'Akses Eksklusif Mitra Balla’ Fresh',
+    contact_address VARCHAR(255) DEFAULT 'Makassar, Sulawesi Selatan, Indonesia',
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-$conn->query("INSERT IGNORE INTO agency_site_content (id, hero_title, hero_description) VALUES (1, 'Balla’ Fresh', 'Solusi layanan terbaik untuk kebutuhan Anda.')");
+
+$siteCols = tableColumns($conn, 'agency_site_content');
+$expectedSiteCols = [
+    'hero_tag' => "VARCHAR(100) DEFAULT 'Digital Growth Partner'",
+    'about_tag' => "VARCHAR(100) DEFAULT 'Tentang Balla’ Fresh'",
+    'about_title' => "VARCHAR(255) DEFAULT 'Mendorong Kemandirian Petani & UMKM Hidroponik Rumahan'",
+    'about_story' => "TEXT NULL",
+    'about_problem' => "TEXT NULL",
+    'about_solution' => "TEXT NULL",
+    'about_image' => "VARCHAR(255) NULL",
+    'cta_title' => "VARCHAR(255) DEFAULT 'Buka Seluruh Potensi Usaha Hidroponik Anda Sekarang'",
+    'cta_description' => "TEXT NULL",
+    'cta_badge' => "VARCHAR(100) DEFAULT 'Akses Eksklusif Mitra Balla’ Fresh'",
+    'contact_address' => "VARCHAR(255) DEFAULT 'Makassar, Sulawesi Selatan, Indonesia'"
+];
+foreach ($expectedSiteCols as $col => $def) {
+    if (!in_array($col, $siteCols, true)) {
+        $conn->query("ALTER TABLE agency_site_content ADD COLUMN `{$col}` {$def}");
+    }
+}
+$conn->query("INSERT IGNORE INTO agency_site_content (id, hero_title, hero_description) VALUES (1, 'Lebih banyak peluang, #DariRumahAja.', 'Balla’ Fresh membantu petani dan UMKM hidroponik rumahan di Makassar mengembangkan pemasaran dan penjualan melalui solusi digital yang sesuai dengan kebutuhan usahanya.')");
+
+// Pastikan tabel struktur tim (4 orang: 1 Owner + 3 Member) tersedia
+$conn->query("CREATE TABLE IF NOT EXISTS agency_team (
+    id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    role_type ENUM('owner', 'member') NOT NULL DEFAULT 'member',
+    name VARCHAR(190) NOT NULL,
+    position VARCHAR(190) NOT NULL,
+    photo VARCHAR(255) NULL,
+    display_order INT NOT NULL DEFAULT 1,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+$teamCount = (int) scalarQuery($conn, "SELECT COUNT(*) FROM agency_team");
+if ($teamCount === 0) {
+    $conn->query("INSERT INTO agency_team (id, role_type, name, position, photo, display_order) VALUES
+    (1, 'owner', 'Ru\'ya Shadiqa A', 'Owner & Agency Lead', 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=400&q=80', 1),
+    (2, 'member', 'Andi Fadhlur Rahman', 'Lead Brand & Visual Designer', 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=400&q=80', 2),
+    (3, 'member', 'Nur Sernovita Bunga', 'Lead Marketing & Social Growth', 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=400&q=80', 3),
+    (4, 'member', 'Muh. Ilham Pratama', 'Lead Web & Operations Specialist', 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=400&q=80', 4)");
+}
+
 $conn->query("CREATE TABLE IF NOT EXISTS agency_services (
     id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
     title VARCHAR(190) NOT NULL,
@@ -332,39 +781,156 @@ $conn->query("CREATE TABLE IF NOT EXISTS agency_services (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
+// Helper upload file gambar dari komputer ke direktori proyek
+if (!function_exists('uploadAdminFile')) {
+    function uploadAdminFile(string $fieldKey, string $targetDir, string $filePrefix, string &$msg, string &$msgType): ?string {
+        if (empty($_FILES[$fieldKey]['name']) || !is_uploaded_file($_FILES[$fieldKey]['tmp_name'])) {
+            return null;
+        }
+        $allowed = ['image/jpeg' => 'jpg', 'image/png' => 'png', 'image/webp' => 'webp'];
+        $mime = @mime_content_type($_FILES[$fieldKey]['tmp_name']);
+        if (!isset($allowed[$mime]) || (int)$_FILES[$fieldKey]['size'] > 4 * 1024 * 1024) {
+            $msg = 'File foto harus berekstensi JPG, PNG, atau WEBP dan maksimal 4 MB.';
+            $msgType = 'error';
+            return null;
+        }
+        $destDir = __DIR__ . '/' . trim($targetDir, '/');
+        if (!is_dir($destDir)) @mkdir($destDir, 0755, true);
+        $filename = $filePrefix . '-' . bin2hex(random_bytes(6)) . '.' . $allowed[$mime];
+        if (move_uploaded_file($_FILES[$fieldKey]['tmp_name'], $destDir . '/' . $filename)) {
+            return trim($targetDir, '/') . '/' . $filename;
+        }
+        $msg = 'Gagal menyimpan file upload ke server. Periksa hak akses folder.';
+        $msgType = 'error';
+        return null;
+    }
+}
+
 $agencyMessage = '';
 $agencyMessageType = 'success';
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agency_action'])) {
+if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && isset($_POST['agency_action'])) {
     $postedCsrf = (string) ($_POST['agency_csrf'] ?? '');
     if (!hash_equals($_SESSION['order_status_csrf'], $postedCsrf)) {
         $agencyMessage = 'Sesi formulir tidak valid. Muat ulang halaman.';
         $agencyMessageType = 'error';
     } else {
         $agencyAction = (string) $_POST['agency_action'];
-        if ($agencyAction === 'save_content') {
+
+        // 1. SIMPAN SECTION HERO
+        if ($agencyAction === 'save_hero_section') {
+            $heroTag = trim((string) ($_POST['hero_tag'] ?? 'Digital Growth Partner'));
+            $heroTitle = trim((string) ($_POST['hero_title'] ?? ''));
+            $heroDescription = trim((string) ($_POST['hero_description'] ?? ''));
+            $uploadedHero = uploadAdminFile('hero_image_file', 'uploads/agency', 'hero', $agencyMessage, $agencyMessageType);
+
+            if ($agencyMessageType === 'success') {
+                if ($uploadedHero !== null) {
+                    $stmt = $conn->prepare('UPDATE agency_site_content SET hero_tag=?, hero_title=?, hero_description=?, hero_image=? WHERE id=1');
+                    $stmt->bind_param('ssss', $heroTag, $heroTitle, $heroDescription, $uploadedHero);
+                } else {
+                    $stmt = $conn->prepare('UPDATE agency_site_content SET hero_tag=?, hero_title=?, hero_description=? WHERE id=1');
+                    $stmt->bind_param('sss', $heroTag, $heroTitle, $heroDescription);
+                }
+                if ($stmt && $stmt->execute()) {
+                    $agencyMessage = 'Hero Banner website berhasil diperbarui!';
+                } else {
+                    $agencyMessage = 'Gagal memperbarui Hero Banner.';
+                    $agencyMessageType = 'error';
+                }
+                if ($stmt) $stmt->close();
+            }
+
+        // 2. SIMPAN SECTION TENTANG KAMI & ISU UMKM
+        } elseif ($agencyAction === 'save_about_section') {
+            $aboutTag = trim((string) ($_POST['about_tag'] ?? 'Tentang Balla’ Fresh'));
+            $aboutTitle = trim((string) ($_POST['about_title'] ?? ''));
+            $aboutStory = trim((string) ($_POST['about_story'] ?? ''));
+            $aboutProblem = trim((string) ($_POST['about_problem'] ?? ''));
+            $aboutSolution = trim((string) ($_POST['about_solution'] ?? ''));
+            $uploadedAbout = uploadAdminFile('about_image_file', 'uploads/agency', 'about', $agencyMessage, $agencyMessageType);
+
+            if ($agencyMessageType === 'success') {
+                if ($uploadedAbout !== null) {
+                    $stmt = $conn->prepare('UPDATE agency_site_content SET about_tag=?, about_title=?, about_story=?, about_problem=?, about_solution=?, about_image=? WHERE id=1');
+                    $stmt->bind_param('ssssss', $aboutTag, $aboutTitle, $aboutStory, $aboutProblem, $aboutSolution, $uploadedAbout);
+                } else {
+                    $stmt = $conn->prepare('UPDATE agency_site_content SET about_tag=?, about_title=?, about_story=?, about_problem=?, about_solution=? WHERE id=1');
+                    $stmt->bind_param('sssss', $aboutTag, $aboutTitle, $aboutStory, $aboutProblem, $aboutSolution);
+                }
+                if ($stmt && $stmt->execute()) {
+                    $agencyMessage = 'Section Tentang Kami & Isu UMKM berhasil disimpan!';
+                } else {
+                    $agencyMessage = 'Gagal memperbarui Section Tentang Kami.';
+                    $agencyMessageType = 'error';
+                }
+                if ($stmt) $stmt->close();
+            }
+
+        // 3. SIMPAN STRUKTUR ORGANISASI (4 TIM: 1 OWNER + 3 ANGGOTA)
+        } elseif ($agencyAction === 'save_team_section') {
+            $teamPost = $_POST['team'] ?? [];
+            if (is_array($teamPost)) {
+                foreach ($teamPost as $memberId => $mdata) {
+                    $mid = (int) $memberId;
+                    if ($mid <= 0) continue;
+                    $mname = trim((string) ($mdata['name'] ?? ''));
+                    $mposition = trim((string) ($mdata['position'] ?? ''));
+                    if ($mname === '') continue;
+
+                    $fileKey = 'team_photo_' . $mid;
+                    $uploadedPhoto = uploadAdminFile($fileKey, 'uploads/team', 'team-' . $mid, $agencyMessage, $agencyMessageType);
+
+                    if ($uploadedPhoto !== null) {
+                        $stmt = $conn->prepare('UPDATE agency_team SET name=?, position=?, photo=? WHERE id=?');
+                        $stmt->bind_param('sssi', $mname, $mposition, $uploadedPhoto, $mid);
+                    } else {
+                        $stmt = $conn->prepare('UPDATE agency_team SET name=?, position=? WHERE id=?');
+                        $stmt->bind_param('ssi', $mname, $mposition, $mid);
+                    }
+                    if ($stmt) {
+                        $stmt->execute();
+                        $stmt->close();
+                    }
+                }
+                if ($agencyMessageType === 'success') {
+                    $agencyMessage = 'Struktur organisasi dan foto tim berhasil disimpan langsung!';
+                }
+            }
+
+        // 4. SIMPAN SECTION AJAKAN BERGABUNG / CTA
+        } elseif ($agencyAction === 'save_cta_section') {
+            $ctaBadge = trim((string) ($_POST['cta_badge'] ?? 'Akses Eksklusif Mitra Balla’ Fresh'));
+            $ctaTitle = trim((string) ($_POST['cta_title'] ?? ''));
+            $ctaDescription = trim((string) ($_POST['cta_description'] ?? ''));
+            $stmt = $conn->prepare('UPDATE agency_site_content SET cta_badge=?, cta_title=?, cta_description=? WHERE id=1');
+            if ($stmt) {
+                $stmt->bind_param('sss', $ctaBadge, $ctaTitle, $ctaDescription);
+                $agencyMessage = $stmt->execute() ? 'Section Ajakan Bergabung / CTA berhasil diperbarui!' : 'Gagal memperbarui CTA.';
+                if ($stmt->errno) $agencyMessageType = 'error';
+                $stmt->close();
+            }
+
+        // 5. SIMPAN INFORMASI KONTAK WEBSITE
+        } elseif ($agencyAction === 'save_contact_section') {
+            $contactEmail = trim((string) ($_POST['contact_email'] ?? ''));
+            $contactPhone = trim((string) ($_POST['contact_phone'] ?? ''));
+            $contactAddress = trim((string) ($_POST['contact_address'] ?? ''));
+            $stmt = $conn->prepare('UPDATE agency_site_content SET contact_email=?, contact_phone=?, contact_address=? WHERE id=1');
+            if ($stmt) {
+                $stmt->bind_param('sss', $contactEmail, $contactPhone, $contactAddress);
+                $agencyMessage = $stmt->execute() ? 'Informasi kontak dan alamat website berhasil diperbarui!' : 'Gagal memperbarui kontak.';
+                if ($stmt->errno) $agencyMessageType = 'error';
+                $stmt->close();
+            }
+
+        // UNIFIED CONTENT FALLBACK
+        } elseif ($agencyAction === 'save_content') {
             $heroTitle = trim((string) ($_POST['hero_title'] ?? ''));
             $heroDescription = trim((string) ($_POST['hero_description'] ?? ''));
             $contactEmail = trim((string) ($_POST['contact_email'] ?? ''));
             $contactPhone = trim((string) ($_POST['contact_phone'] ?? ''));
-            $imagePath = null;
-            if (!empty($_FILES['hero_image']['name']) && is_uploaded_file($_FILES['hero_image']['tmp_name'])) {
-                $allowedMime = ['image/jpeg' => 'jpg', 'image/png' => 'png', 'image/webp' => 'webp'];
-                $mime = mime_content_type($_FILES['hero_image']['tmp_name']);
-                if (!isset($allowedMime[$mime]) || (int) $_FILES['hero_image']['size'] > 4 * 1024 * 1024) {
-                    $agencyMessage = 'Gambar harus JPG, PNG, atau WEBP dan maksimal 4 MB.';
-                    $agencyMessageType = 'error';
-                } else {
-                    $uploadDir = __DIR__ . '/uploads/agency';
-                    if (!is_dir($uploadDir)) mkdir($uploadDir, 0755, true);
-                    $fileName = 'hero-' . bin2hex(random_bytes(8)) . '.' . $allowedMime[$mime];
-                    if (move_uploaded_file($_FILES['hero_image']['tmp_name'], $uploadDir . '/' . $fileName)) {
-                        $imagePath = 'uploads/agency/' . $fileName;
-                    } else {
-                        $agencyMessage = 'Gagal menyimpan gambar. Periksa izin folder uploads/agency.';
-                        $agencyMessageType = 'error';
-                    }
-                }
-            }
+            $imagePath = uploadAdminFile('hero_image', 'uploads/agency', 'hero', $agencyMessage, $agencyMessageType);
+
             if ($agencyMessageType === 'success') {
                 if ($imagePath !== null) {
                     $stmt = $conn->prepare('UPDATE agency_site_content SET hero_title=?, hero_description=?, contact_email=?, contact_phone=?, hero_image=? WHERE id=1');
@@ -451,9 +1017,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['agency_action'])) {
         }
     }
 }
-$siteContent = ['hero_title' => '', 'hero_description' => '', 'contact_email' => '', 'contact_phone' => '', 'hero_image' => ''];
+$siteContent = [
+    'hero_tag' => 'Digital Growth Partner',
+    'hero_title' => '',
+    'hero_description' => '',
+    'contact_email' => '',
+    'contact_phone' => '',
+    'hero_image' => '',
+    'about_tag' => 'Tentang Balla’ Fresh',
+    'about_title' => 'Mendorong Kemandirian Petani & UMKM Hidroponik Rumahan',
+    'about_story' => '',
+    'about_problem' => '',
+    'about_solution' => '',
+    'about_image' => '',
+    'cta_title' => 'Buka Seluruh Potensi Usaha Hidroponik Anda Sekarang',
+    'cta_description' => '',
+    'cta_badge' => 'Akses Eksklusif Mitra Balla’ Fresh',
+    'contact_address' => 'Makassar, Sulawesi Selatan, Indonesia'
+];
 $contentResult = $conn->query('SELECT * FROM agency_site_content WHERE id=1 LIMIT 1');
-if ($contentResult && $contentRow = $contentResult->fetch_assoc()) $siteContent = array_merge($siteContent, $contentRow);
+if ($contentResult && $contentRow = $contentResult->fetch_assoc()) {
+    $siteContent = array_merge($siteContent, array_filter($contentRow, fn($v) => $v !== null));
+}
+
+$teamMembersList = [];
+$teamRes = $conn->query('SELECT * FROM agency_team ORDER BY display_order ASC, id ASC');
+if ($teamRes) {
+    while ($tRow = $teamRes->fetch_assoc()) {
+        $teamMembersList[] = $tRow;
+    }
+    $teamRes->free();
+}
 
 $categoriesList = [];
 $catResult = $conn->query('SELECT id, name FROM categories ORDER BY id ASC');
@@ -486,6 +1080,485 @@ $revResult = $conn->query('
 if ($revResult) {
     while ($revRow = $revResult->fetch_assoc()) $allReviews[] = $revRow;
     $revResult->free();
+}
+
+// ==========================================
+// KONSULTASI & ROOM CHAT MITRA HANDLER
+// ==========================================
+$consultationMessage = '';
+$consultationMessageType = 'success';
+
+if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && isset($_POST['consultation_action'])) {
+    $postedCsrf = (string) ($_POST['consultation_csrf'] ?? '');
+    if (!hash_equals($_SESSION['order_status_csrf'], $postedCsrf)) {
+        $consultationMessage = 'Sesi formulir tidak valid. Silakan muat ulang halaman.';
+        $consultationMessageType = 'error';
+    } else {
+        $cAction = (string) $_POST['consultation_action'];
+        $cId = (int) ($_POST['consultation_id'] ?? 0);
+
+        if ($cAction === 'approve_consultation' && $cId > 0) {
+            $stmt = $conn->prepare("UPDATE consultations SET status = 'approved', approved_at = NOW() WHERE id = ?");
+            if ($stmt) {
+                $stmt->bind_param('i', $cId);
+                if ($stmt->execute()) {
+                    $welcomeMsg = "Halo Mitra Balla’ Fresh! Permohonan konsultasi Anda telah disetujui (ACC) oleh Admin. Silakan sampaikan kendala, kebutuhan desain, atau strategi pemasaran hidroponik Anda di sini.";
+                    $wStmt = $conn->prepare("INSERT INTO consultation_messages (consultation_id, sender_type, sender_id, sender_name, message) VALUES (?, 'admin', ?, ?, ?)");
+                    if ($wStmt) {
+                        $wStmt->bind_param('iiss', $cId, $adminId, $adminName, $welcomeMsg);
+                        $wStmt->execute();
+                        $wStmt->close();
+                    }
+                    $consultationMessage = 'Permohonan konsultasi berhasil di-ACC (disetujui)! Room chat sekarang aktif untuk mitra.';
+                } else {
+                    $consultationMessage = 'Gagal menyetujui konsultasi.';
+                    $consultationMessageType = 'error';
+                }
+                $stmt->close();
+            }
+        } elseif ($cAction === 'complete_consultation' && $cId > 0) {
+            $stmt = $conn->prepare("UPDATE consultations SET status = 'completed' WHERE id = ?");
+            if ($stmt) {
+                $stmt->bind_param('i', $cId);
+                if ($stmt->execute()) {
+                    $consultationMessage = 'Sesi konsultasi berhasil ditandai selesai.';
+                } else {
+                    $consultationMessage = 'Gagal menyelesaikan sesi konsultasi.';
+                    $consultationMessageType = 'error';
+                }
+                $stmt->close();
+            }
+        } elseif ($cAction === 'send_admin_chat' && $cId > 0) {
+            // Verifikasi room konsultasi valid dan berstatus approved
+            $checkRoom = $conn->prepare("SELECT id, status FROM consultations WHERE id = ? LIMIT 1");
+            $cActiveRow = null;
+            if ($checkRoom) {
+                $checkRoom->bind_param('i', $cId);
+                $checkRoom->execute();
+                $cActiveRow = $checkRoom->get_result()->fetch_assoc();
+                $checkRoom->close();
+            }
+
+            if (!$cActiveRow || $cActiveRow['status'] !== 'approved') {
+                $consultationMessage = 'Sesi konsultasi belum disetujui (ACC) atau telah selesai.';
+                $consultationMessageType = 'error';
+            } else {
+                $replyText = trim((string) ($_POST['chat_message'] ?? ''));
+
+                // Jenis file yang diizinkan (konsisten dengan sistem pengguna pada profil.php)
+                $allowedChatFiles = [
+                    'jpg'  => ['image/jpeg'], 'jpeg' => ['image/jpeg'],
+                    'png'  => ['image/png'],  'webp' => ['image/webp'], 'gif' => ['image/gif'],
+                    'mp4'  => ['video/mp4'],  'webm' => ['video/webm'], 'mov' => ['video/quicktime'],
+                    'pdf'  => ['application/pdf'],
+                    'doc'  => ['application/msword', 'application/x-ole-storage'],
+                    'docx' => ['application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/zip'],
+                    'xls'  => ['application/vnd.ms-excel', 'application/x-ole-storage'],
+                    'xlsx' => ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/zip'],
+                    'ppt'  => ['application/vnd.ms-powerpoint', 'application/x-ole-storage'],
+                    'pptx' => ['application/vnd.openxmlformats-officedocument.presentationml.presentation', 'application/zip'],
+                    'txt'  => ['text/plain'],
+                    'csv'  => ['text/plain', 'text/csv', 'application/vnd.ms-excel']
+                ];
+
+                $maxChatFileSize = 20 * 1024 * 1024; // 20 MB per file
+                $maxChatFiles = 5;
+                $uploadedChatFiles = [];
+                $uploadError = '';
+
+                if (!empty($_FILES['chat_files']) && is_array($_FILES['chat_files']['name'])) {
+                    $fileCount = count($_FILES['chat_files']['name']);
+                    if ($fileCount > $maxChatFiles) {
+                        $uploadError = 'Maksimal 5 file lampiran dalam satu pesan.';
+                    } else {
+                        $uploadDir = __DIR__ . '/uploads/chat_attachments';
+                        if (!is_dir($uploadDir) && !mkdir($uploadDir, 0755, true) && !is_dir($uploadDir)) {
+                            $uploadError = 'Folder penyimpanan lampiran tidak dapat dibuat di server.';
+                        } else {
+                            $finfo = new finfo(FILEINFO_MIME_TYPE);
+                            for ($i = 0; $i < $fileCount; $i++) {
+                                $errorCode = (int) ($_FILES['chat_files']['error'][$i] ?? UPLOAD_ERR_NO_FILE);
+                                if ($errorCode === UPLOAD_ERR_NO_FILE) {
+                                    continue;
+                                }
+                                if ($errorCode !== UPLOAD_ERR_OK) {
+                                    $uploadError = 'Salah satu file gagal diunggah. Silakan coba kembali.';
+                                    break;
+                                }
+
+                                $tmpName = (string) ($_FILES['chat_files']['tmp_name'][$i] ?? '');
+                                $originalName = basename((string) ($_FILES['chat_files']['name'][$i] ?? 'file'));
+                                $fileSize = (int) ($_FILES['chat_files']['size'][$i] ?? 0);
+                                $extension = strtolower(pathinfo($originalName, PATHINFO_EXTENSION));
+                                $detectedMime = ($tmpName !== '' && is_uploaded_file($tmpName)) ? $finfo->file($tmpName) : '';
+
+                                if (!isset($allowedChatFiles[$extension]) ||
+                                    !in_array($detectedMime, $allowedChatFiles[$extension], true) ||
+                                    $fileSize <= 0 || $fileSize > $maxChatFileSize) {
+                                    $uploadError = 'File "' . htmlspecialchars($originalName, ENT_QUOTES, 'UTF-8') . '" tidak didukung atau melebihi batas 20 MB.';
+                                    break;
+                                }
+
+                                $storedName = 'chat-' . $cId . '-' . bin2hex(random_bytes(12)) . '.' . $extension;
+                                if (!move_uploaded_file($tmpName, $uploadDir . '/' . $storedName)) {
+                                    $uploadError = 'File "' . htmlspecialchars($originalName, ENT_QUOTES, 'UTF-8') . '" gagal disimpan ke server.';
+                                    break;
+                                }
+
+                                $relativePath = 'uploads/chat_attachments/' . $storedName;
+                                $uploadedChatFiles[] = [
+                                    'original_name' => $originalName,
+                                    'path' => $relativePath,
+                                    'mime' => $detectedMime
+                                ];
+                            }
+                        }
+                    }
+                }
+
+                if ($uploadError !== '') {
+                    // Bersihkan file yang sudah terlanjur dipindahkan jika batch ada yang gagal
+                    foreach ($uploadedChatFiles as $uFile) {
+                        $storedPath = __DIR__ . '/' . $uFile['path'];
+                        if (is_file($storedPath)) @unlink($storedPath);
+                    }
+                    $consultationMessage = $uploadError;
+                    $consultationMessageType = 'error';
+                } elseif ($replyText === '' && empty($uploadedChatFiles)) {
+                    $consultationMessage = 'Tulis pesan atau pilih minimal satu file lampiran untuk dikirim.';
+                    $consultationMessageType = 'error';
+                } else {
+                    $isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off');
+                    $scheme = $isHttps ? 'https' : 'http';
+                    $host = preg_replace('/[^a-zA-Z0-9.:-]/', '', (string) ($_SERVER['HTTP_HOST'] ?? 'localhost'));
+                    $basePath = str_replace('\\', '/', dirname((string) ($_SERVER['SCRIPT_NAME'] ?? '/admin_dashboard.php')));
+                    $basePath = ($basePath === '/' || $basePath === '.') ? '' : rtrim($basePath, '/');
+                    $messageToSave = $replyText;
+
+                    foreach ($uploadedChatFiles as $uFile) {
+                        $publicUrl = $scheme . '://' . $host . $basePath . '/' . $uFile['path'];
+                        $messageToSave .= ($messageToSave !== '' ? "\n\n" : '') .
+                            '[Lampiran] ' . $uFile['original_name'] .
+                            "\nURL: " . $publicUrl;
+                    }
+
+                    $stmt = $conn->prepare("INSERT INTO consultation_messages (consultation_id, sender_type, sender_id, sender_name, message) VALUES (?, 'admin', ?, ?, ?)");
+                    if ($stmt) {
+                        $stmt->bind_param('iiss', $cId, $adminId, $adminName, $messageToSave);
+                        if ($stmt->execute()) {
+                            $consultationMessage = 'Pesan balasan dan lampiran berhasil terkirim langsung ke room chat mitra!';
+                        } else {
+                            $consultationMessage = 'Gagal mengirim pesan balasan: ' . $stmt->error;
+                            $consultationMessageType = 'error';
+                        }
+                        $stmt->close();
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ==========================================
+// PENGATURAN & KEBIJAKAN PRIVASI HANDLER (EDIT-ONLY)
+// ==========================================
+$settingsMessage = '';
+$settingsMessageType = 'success';
+
+if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && isset($_POST['settings_action'])) {
+    $postedCsrf = (string) ($_POST['settings_csrf'] ?? '');
+    if (!hash_equals($_SESSION['order_status_csrf'], $postedCsrf)) {
+        $settingsMessage = 'Sesi formulir tidak valid. Silakan muat ulang halaman.';
+        $settingsMessageType = 'error';
+    } else {
+        $sAction = (string) $_POST['settings_action'];
+        if ($sAction === 'save_policies') {
+            $privacyPolicy = trim((string) ($_POST['privacy_policy'] ?? ''));
+            $termsConditions = trim((string) ($_POST['terms_conditions'] ?? ''));
+
+            if ($privacyPolicy === '' || $termsConditions === '') {
+                $settingsMessage = 'Kebijakan Privasi dan Syarat & Ketentuan tidak boleh dikosongkan.';
+                $settingsMessageType = 'error';
+            } else {
+                $stmt = $conn->prepare("UPDATE agency_site_content SET privacy_policy = ?, terms_conditions = ?, policy_updated_at = NOW() WHERE id = 1");
+                if ($stmt) {
+                    $stmt->bind_param('ss', $privacyPolicy, $termsConditions);
+                    if ($stmt->execute()) {
+                        $settingsMessage = 'Kebijakan Privasi dan Syarat Layanan berhasil diperbarui langsung ke website!';
+                    } else {
+                        $settingsMessage = 'Gagal memperbarui kebijakan.';
+                        $settingsMessageType = 'error';
+                    }
+                    $stmt->close();
+                }
+            }
+        }
+    }
+}
+
+// ==========================================
+// KELOLA ARTIKEL & EDUKASI HANDLER
+// ==========================================
+$articleMessage = '';
+$articleMessageType = 'success';
+
+if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && isset($_POST['article_action'])) {
+    $postedCsrf = (string) ($_POST['article_csrf'] ?? '');
+    if (!hash_equals($_SESSION['order_status_csrf'], $postedCsrf)) {
+        $articleMessage = 'Sesi formulir tidak valid. Silakan muat ulang halaman.';
+        $articleMessageType = 'error';
+    } else {
+        $aAction = (string) $_POST['article_action'];
+
+        if ($aAction === 'save_article') {
+            $artId = (int) ($_POST['article_id'] ?? 0);
+            $artTitle = trim((string) ($_POST['title'] ?? ''));
+            $artSlug = trim((string) ($_POST['slug'] ?? ''));
+            $artCategory = trim((string) ($_POST['category'] ?? 'Branding & Kemasan'));
+            $artExcerpt = trim((string) ($_POST['excerpt'] ?? ''));
+            $rawContent = trim((string) ($_POST['content'] ?? ''));
+            $artContent = sanitizeArticleHtml($rawContent);
+            $artAuthorName = trim((string) ($_POST['author_name'] ?? 'Tim Balla’ Fresh'));
+            $artAuthorRole = trim((string) ($_POST['author_role'] ?? 'Spesialis Branding & Konsultan'));
+            $artReadTime = trim((string) ($_POST['read_time'] ?? '5 menit baca'));
+            $isFeatured = isset($_POST['is_featured']) ? 1 : 0;
+            $isPublished = isset($_POST['is_published']) ? 1 : 0;
+
+            if ($artTitle === '' || $artContent === '') {
+                $articleMessage = 'Judul dan Isi Konten artikel wajib diisi.';
+                $articleMessageType = 'error';
+                $editArticleData = [
+                    'id' => $artId,
+                    'title' => $artTitle,
+                    'slug' => $artSlug,
+                    'category' => $artCategory,
+                    'excerpt' => $artExcerpt,
+                    'content' => $artContent,
+                    'image' => trim((string) ($_POST['existing_image'] ?? '')),
+                    'author_name' => $artAuthorName,
+                    'author_role' => $artAuthorRole,
+                    'author_avatar' => trim((string) ($_POST['author_avatar'] ?? '')),
+                    'read_time' => $artReadTime,
+                    'is_featured' => $isFeatured,
+                    'is_published' => $isPublished
+                ];
+            } else {
+                // Generate slug jika kosong
+                if ($artSlug === '') {
+                    $slugBase = strtolower(trim((string)preg_replace('/[^A-Za-z0-9-]+/', '-', $artTitle), '-'));
+                    $artSlug = $slugBase ?: 'artikel-' . time();
+                }
+
+                // Cek gambar
+                $existingImage = trim((string) ($_POST['existing_image'] ?? ''));
+                $artImage = $existingImage;
+                
+                // Upload file gambar artikel baru jika ada
+                $uploadedImg = uploadAdminFile('article_image_file', 'uploads/articles', 'article', $articleMessage, $articleMessageType);
+                if ($uploadedImg) {
+                    $artImage = $uploadedImg;
+                } elseif (!empty($_POST['article_image_url'])) {
+                    $artImage = trim((string) $_POST['article_image_url']);
+                }
+                if ($artImage === '') {
+                    $artImage = 'https://images.unsplash.com/photo-1540420773420-3366772f4999?auto=format&fit=crop&w=1200&q=80';
+                }
+
+                // Cek avatar penulis
+                $artAvatar = trim((string) ($_POST['author_avatar'] ?? ''));
+                if ($artAvatar === '') {
+                    $artAvatar = 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=200&q=80';
+                }
+
+                if ($artId > 0) {
+                    // Update
+                    $stmt = $conn->prepare("
+                        UPDATE articles 
+                        SET title = ?, slug = ?, category = ?, excerpt = ?, content = ?, 
+                            image = ?, author_name = ?, author_role = ?, author_avatar = ?, 
+                            read_time = ?, is_featured = ?, is_published = ?, updated_at = NOW() 
+                        WHERE id = ?
+                    ");
+                    if ($stmt) {
+                        $stmt->bind_param(
+                            'ssssssssssiii',
+                            $artTitle, $artSlug, $artCategory, $artExcerpt, $artContent,
+                            $artImage, $artAuthorName, $artAuthorRole, $artAvatar,
+                            $artReadTime, $isFeatured, $isPublished, $artId
+                        );
+                        if ($stmt->execute()) {
+                            $articleMessage = 'Artikel "' . htmlspecialchars($artTitle, ENT_QUOTES, 'UTF-8') . '" berhasil diperbarui!';
+                        } else {
+                            $articleMessage = 'Gagal memperbarui artikel: ' . $stmt->error;
+                            $articleMessageType = 'error';
+                        }
+                        $stmt->close();
+                    }
+                } else {
+                    // Insert
+                    $stmt = $conn->prepare("
+                        INSERT INTO articles 
+                        (title, slug, category, excerpt, content, image, author_name, author_role, author_avatar, read_time, is_featured, is_published, views_count, created_at, updated_at) 
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NOW(), NOW())
+                    ");
+                    if ($stmt) {
+                        $stmt->bind_param(
+                            'ssssssssssii',
+                            $artTitle, $artSlug, $artCategory, $artExcerpt, $artContent,
+                            $artImage, $artAuthorName, $artAuthorRole, $artAvatar,
+                            $artReadTime, $isFeatured, $isPublished
+                        );
+                        if ($stmt->execute()) {
+                            $articleMessage = 'Artikel baru "' . htmlspecialchars($artTitle, ENT_QUOTES, 'UTF-8') . '" berhasil dibuat dan dipublikasikan!';
+                        } else {
+                            $articleMessage = 'Gagal membuat artikel baru: ' . $stmt->error;
+                            $articleMessageType = 'error';
+                        }
+                        $stmt->close();
+                    }
+                }
+            }
+        } elseif ($aAction === 'delete_article') {
+            $artId = (int) ($_POST['article_id'] ?? 0);
+            if ($artId > 0) {
+                $stmt = $conn->prepare("DELETE FROM articles WHERE id = ?");
+                if ($stmt) {
+                    $stmt->bind_param('i', $artId);
+                    $articleMessage = $stmt->execute() ? 'Artikel berhasil dihapus.' : 'Gagal menghapus artikel.';
+                    $stmt->close();
+                }
+            }
+        } elseif ($aAction === 'toggle_publish') {
+            $artId = (int) ($_POST['article_id'] ?? 0);
+            if ($artId > 0) {
+                $stmt = $conn->prepare("UPDATE articles SET is_published = IF(is_published = 1, 0, 1) WHERE id = ?");
+                if ($stmt) {
+                    $stmt->bind_param('i', $artId);
+                    $articleMessage = $stmt->execute() ? 'Status publikasi artikel berhasil diubah.' : 'Gagal mengubah status publikasi.';
+                    $stmt->close();
+                }
+            }
+        } elseif ($aAction === 'toggle_featured') {
+            $artId = (int) ($_POST['article_id'] ?? 0);
+            if ($artId > 0) {
+                $stmt = $conn->prepare("UPDATE articles SET is_featured = IF(is_featured = 1, 0, 1) WHERE id = ?");
+                if ($stmt) {
+                    $stmt->bind_param('i', $artId);
+                    $articleMessage = $stmt->execute() ? 'Status unggulan (hero banner) artikel berhasil diubah.' : 'Gagal mengubah status unggulan.';
+                    $stmt->close();
+                }
+            }
+        }
+    }
+}
+
+// Query artikel untuk admin dashboard
+$allArticlesList = [];
+$artStats = ['total' => 0, 'published' => 0, 'featured' => 0, 'views' => 0];
+$allArtQuery = $conn->query("SELECT * FROM articles ORDER BY created_at DESC");
+if ($allArtQuery) {
+    while ($aRow = $allArtQuery->fetch_assoc()) {
+        $allArticlesList[] = $aRow;
+        $artStats['total']++;
+        if (!empty($aRow['is_published'])) $artStats['published']++;
+        if (!empty($aRow['is_featured'])) $artStats['featured']++;
+        $artStats['views'] += (int)($aRow['views_count'] ?? 0);
+    }
+    $allArtQuery->free();
+}
+
+// Data artikel yang sedang diedit jika ada edit_article
+$editArticleData = null;
+$editArtId = (int) ($_GET['edit_article'] ?? 0);
+if ($editArtId > 0) {
+    foreach ($allArticlesList as $arItem) {
+        if ((int)$arItem['id'] === $editArtId) {
+            $editArticleData = $arItem;
+            break;
+        }
+    }
+}
+
+// Status apakah editor artikel sedang dibuka (mode Tambah Baru atau Edit)
+$isArticleEditorOpen = ($editArticleData !== null) || (isset($_GET['action']) && in_array($_GET['action'], ['create', 'add', 'new'], true));
+
+// Query Data Usaha Mitra
+$mitraBusinesses = [];
+$bizRes = $conn->query("
+    SELECT id, name, email, phone, profile_image, birth_date,
+           business_name, business_type, business_role, social_media,
+           website_url, business_address, business_description,
+           service_preferences, address, created_at
+    FROM users
+    ORDER BY (business_name IS NOT NULL AND business_name != '') DESC, id DESC
+");
+if ($bizRes) {
+    while ($bRow = $bizRes->fetch_assoc()) {
+        $mitraBusinesses[] = $bRow;
+    }
+    $bizRes->free();
+}
+
+// Query Konsultasi & Chat
+$allConsultations = [];
+$consultRes = $conn->query("
+    SELECT c.*, u.name AS user_name, u.email AS user_email, u.profile_image,
+           (SELECT COUNT(*) FROM consultation_messages WHERE consultation_id = c.id) AS msg_count,
+           (SELECT message FROM consultation_messages WHERE consultation_id = c.id ORDER BY id DESC LIMIT 1) AS last_message,
+           (SELECT created_at FROM consultation_messages WHERE consultation_id = c.id ORDER BY id DESC LIMIT 1) AS last_message_at
+    FROM consultations c
+    LEFT JOIN users u ON c.user_id = u.id
+    ORDER BY CASE WHEN c.status = 'pending' THEN 1 WHEN c.status = 'approved' THEN 2 ELSE 3 END, c.created_at DESC
+");
+if ($consultRes) {
+    while ($cRow = $consultRes->fetch_assoc()) {
+        $allConsultations[] = $cRow;
+    }
+    $consultRes->free();
+}
+
+$pendingConsultationCount = 0;
+foreach ($allConsultations as $c) {
+    if (($c['status'] ?? '') === 'pending') {
+        $pendingConsultationCount++;
+    }
+}
+
+// Active room chat
+$activeChatId = (int) ($_GET['chat_id'] ?? 0);
+if ($activeChatId === 0 && !empty($allConsultations)) {
+    $activeChatId = (int) $allConsultations[0]['id'];
+}
+$activeConsultation = null;
+$activeChatMessages = [];
+if ($activeChatId > 0) {
+    foreach ($allConsultations as $c) {
+        if ((int)$c['id'] === $activeChatId) {
+            $activeConsultation = $c;
+            break;
+        }
+    }
+    $msgStmt = $conn->prepare("SELECT * FROM consultation_messages WHERE consultation_id = ? ORDER BY id ASC");
+    if ($msgStmt) {
+        $msgStmt->bind_param('i', $activeChatId);
+        $msgStmt->execute();
+        $mRes = $msgStmt->get_result();
+        while ($mRow = $mRes->fetch_assoc()) {
+            $activeChatMessages[] = $mRow;
+        }
+        $msgStmt->close();
+    }
+}
+
+// Policy content data
+$policyContent = [
+    'privacy_policy' => '',
+    'terms_conditions' => '',
+    'policy_updated_at' => null
+];
+$pRes = $conn->query("SELECT privacy_policy, terms_conditions, policy_updated_at FROM agency_site_content WHERE id = 1 LIMIT 1");
+if ($pRes && $pRow = $pRes->fetch_assoc()) {
+    $policyContent = array_merge($policyContent, array_filter($pRow, fn($v) => $v !== null));
 }
 
 $initials = 'BF';
@@ -530,107 +1603,113 @@ if (count($nameParts) >= 2) {
             color: var(--ink);
             background: #f7f9f3;
             font-family: "DM Sans", sans-serif;
-            font-size: 14px;
+            font-size: 13px;
         }
         a { color: inherit; text-decoration: none; }
         button, input { font: inherit; }
-        .app { min-height: 100vh; display: grid; grid-template-columns: 250px minmax(0, 1fr); }
+        .app { min-height: 100vh; display: grid; grid-template-columns: 235px minmax(0, 1fr); }
         .sidebar {
-            position: sticky; top: 0; height: 100vh; padding: 25px 17px;
+            position: sticky; top: 0; height: 100vh; max-height: 100vh; padding: 14px 12px;
             display: flex; flex-direction: column; background: var(--green-950); color: #eaf2e2;
+            overflow-y: auto; overflow-x: hidden;
         }
-        .brand { display: flex; align-items: center; gap: 11px; padding: 0 10px 29px; }
+        .sidebar::-webkit-scrollbar { width: 4px; }
+        .sidebar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.22); border-radius: 4px; }
+        .brand { display: flex; align-items: center; gap: 10px; padding: 2px 6px 14px; border-bottom: 1px solid rgba(255,255,255,0.1); margin-bottom: 6px; flex-shrink: 0; }
         .brand-mark {
-            width: 43px; height: 43px; border-radius: 14px; background: #fff;
+            width: 36px; height: 36px; border-radius: 11px; background: #fff;
             display: grid; place-items: center; overflow: hidden; flex: 0 0 auto;
         }
         .brand-mark img { width: 100%; height: 100%; object-fit: contain; }
         .brand-fallback { color: var(--green-800); font-family: "Manrope", sans-serif; font-weight: 800; font-size: 11px; display: none; }
-        .brand-name { font: 800 18px/1.1 "Manrope", sans-serif; letter-spacing: -.55px; color: #ffff; }
+        .brand-name { font: 800 16px/1.1 "Manrope", sans-serif; letter-spacing: -.5px; color: #ffff; }
         .brand-name span { color: #ffff; }
-        .brand-caption { color: #b3cba8; font-size: 10px; margin-top: 5px; letter-spacing: 1.45px; text-transform: uppercase; }
-        .nav-label { color: #94aa87; font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; padding: 0 13px; margin: 5px 0 10px; font-weight: 700; }
-        .side-nav { display: grid; gap: 6px; }
+        .brand-caption { color: #b3cba8; font-size: 9px; margin-top: 3px; letter-spacing: 1.2px; text-transform: uppercase; }
+        .nav-label { color: #94aa87; font-size: 9px; letter-spacing: 1.3px; text-transform: uppercase; padding: 0 8px; margin: 8px 0 5px; font-weight: 700; flex-shrink: 0; }
+        .side-nav { display: grid; gap: 3px; flex-shrink: 0; }
         .side-link {
-            display: flex; align-items: center; gap: 12px; padding: 12px 13px;
-            border-radius: 12px; color: #d2dfca; font-weight: 600; transition: .2s;
+            display: flex; align-items: center; gap: 9px; padding: 8px 10px;
+            border-radius: 9px; color: #d2dfca; font-weight: 600; font-size: 12px; transition: .18s;
         }
-        .side-link i { width: 18px; text-align: center; font-size: 15px; color: #a8c18f; }
-        .side-link:hover, .side-link.active { color: #fff; background: rgba(255,255,255,.11); }
+        .side-link i { width: 16px; text-align: center; font-size: 13px; color: #a8c18f; flex-shrink: 0; }
+        .side-link:hover, .side-link.active { color: #fff; background: rgba(255,255,255,.12); }
         .side-link.active { box-shadow: inset 3px 0 #b7d88b; }
-        .side-spacer { flex: 1; }
-        .side-help { padding: 16px; margin: 22px 3px 15px; border: 1px solid rgba(255,255,255,.12); border-radius: 15px; background: rgba(255,255,255,.055); }
-        .side-help i { color: #b8d891; font-size: 17px; }
-        .side-help strong { display: block; margin: 10px 0 5px; font-size: 12px; }
-        .side-help p { color: #b7c7ae; font-size: 11px; line-height: 1.6; margin: 0; }
-        .side-bottom { border-top: 1px solid rgba(255,255,255,.12); padding: 16px 8px 0; display: flex; align-items: center; gap: 10px; }
-        .avatar { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 13px; background: #dcebc9; color: var(--green-900); font-weight: 800; flex: 0 0 auto; }
+        .side-spacer { flex: 1; min-height: 8px; }
+        .side-help { padding: 9px 11px; margin: 8px 2px 6px; border: 1px solid rgba(255,255,255,.12); border-radius: 10px; background: rgba(255,255,255,.055); flex-shrink: 0; }
+        .side-help i { color: #b8d891; font-size: 13px; }
+        .side-help strong { display: block; margin: 5px 0 2px; font-size: 11px; }
+        .side-help p { color: #b7c7ae; font-size: 9.5px; line-height: 1.45; margin: 0; }
+        @media (max-height: 760px) {
+            .side-help { display: none; }
+        }
+        .side-bottom { border-top: 1px solid rgba(255,255,255,.12); padding: 9px 4px 2px; display: flex; align-items: center; gap: 8px; flex-shrink: 0; margin-top: auto; }
+        .avatar { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 9px; background: #dcebc9; color: var(--green-900); font-weight: 800; font-size: 11px; flex: 0 0 auto; }
         .side-user { min-width: 0; flex: 1; }
-        .side-user strong { display: block; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .side-user small { display: block; color: #adc1a2; font-size: 11px; margin-top: 4px; }
-        .side-logout { color: #c4d3bc; padding: 8px; border-radius: 9px; }
+        .side-user strong { display: block; font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .side-user small { display: block; color: #adc1a2; font-size: 9.5px; margin-top: 2px; }
+        .side-logout { color: #c4d3bc; padding: 6px; border-radius: 8px; }
         .side-logout:hover { background: rgba(255,255,255,.1); color: #fff; }
         .main { min-width: 0; }
         .topbar {
-            height: 78px; padding: 0 34px; display: flex; align-items: center; justify-content: space-between;
-            gap: 18px; background: rgba(255,255,255,.88); border-bottom: 1px solid var(--line);
+            height: 58px; padding: 0 24px; display: flex; align-items: center; justify-content: space-between;
+            gap: 16px; background: rgba(255,255,255,.94); border-bottom: 1px solid var(--line);
         }
-        .crumb { color: var(--muted); font-size: 12px; }
+        .crumb { color: var(--muted); font-size: 11.5px; }
         .crumb strong { color: var(--green-800); font-weight: 700; }
-        .top-actions { display: flex; align-items: center; gap: 10px; }
-        .date-chip { display: inline-flex; align-items: center; gap: 8px; color: #5e6b54; background: var(--green-50); border: 1px solid var(--line); padding: 10px 12px; border-radius: 11px; font-size: 12px; }
-        .top-avatar { display: flex; align-items: center; gap: 9px; padding-left: 13px; border-left: 1px solid var(--line); }
-        .top-avatar .avatar { width: 35px; height: 35px; border-radius: 50%; }
-        .top-avatar strong { display: block; font-size: 12px; }
-        .top-avatar small { display: block; margin-top: 3px; color: var(--muted); font-size: 10px; }
-        .content { max-width: 1600px; margin: 0 auto; padding: 30px 34px 42px; }
-        .welcome-row { display: flex; justify-content: space-between; align-items: flex-end; gap: 20px; margin-bottom: 25px; }
-        .eyebrow { color: var(--green-700); font-size: 10px; letter-spacing: 1.8px; font-weight: 800; text-transform: uppercase; }
-        h1 { font: 800 clamp(25px, 2.2vw, 32px)/1.2 "Manrope", sans-serif; letter-spacing: -1px; margin: 9px 0 8px; color: #e48e1e; }
-        .welcome-row p { margin: 0; color: var(--muted); line-height: 1.65; }
-        .welcome-tag { display: inline-flex; align-items: center; gap: 8px; border-radius: 100px; padding: 9px 13px; background: var(--green-100); color: var(--green-800); font-size: 11px; font-weight: 700; white-space: nowrap; }
-        .welcome-tag span { width: 7px; height: 7px; background: #7aa84c; border-radius: 50%; }
-        .stats-grid { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 15px; margin-bottom: 22px; }
-        .stat-card { background: var(--white); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px; box-shadow: var(--shadow); min-width: 0; }
-        .stat-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-        .stat-icon { display: grid; place-items: center; width: 43px; height: 43px; border-radius: 14px; background: var(--green-100); color: var(--green-700); font-size: 17px; }
+        .top-actions { display: flex; align-items: center; gap: 9px; }
+        .date-chip { display: inline-flex; align-items: center; gap: 6px; color: #5e6b54; background: var(--green-50); border: 1px solid var(--line); padding: 6px 10px; border-radius: 8px; font-size: 11px; }
+        .top-avatar { display: flex; align-items: center; gap: 8px; padding-left: 10px; border-left: 1px solid var(--line); }
+        .top-avatar .avatar { width: 30px; height: 30px; border-radius: 50%; font-size: 10.5px; }
+        .top-avatar strong { display: block; font-size: 11px; }
+        .top-avatar small { display: block; margin-top: 1px; color: var(--muted); font-size: 9.5px; }
+        .content { max-width: 1400px; margin: 0 auto; padding: 20px 24px 34px; }
+        .welcome-row { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; margin-bottom: 16px; }
+        .eyebrow { color: var(--green-700); font-size: 9px; letter-spacing: 1.4px; font-weight: 800; text-transform: uppercase; }
+        h1 { font: 800 clamp(19px, 1.8vw, 24px)/1.2 "Manrope", sans-serif; letter-spacing: -.5px; margin: 5px 0 4px; color: #e48e1e; }
+        .welcome-row p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+        .welcome-tag { display: inline-flex; align-items: center; gap: 6px; border-radius: 100px; padding: 6px 11px; background: var(--green-100); color: var(--green-800); font-size: 10.5px; font-weight: 700; white-space: nowrap; }
+        .welcome-tag span { width: 6px; height: 6px; background: #7aa84c; border-radius: 50%; }
+        .stats-grid { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 12px; margin-bottom: 16px; }
+        .stat-card { background: var(--white); border: 1px solid var(--line); border-radius: 13px; padding: 13px 15px; box-shadow: 0 2px 8px rgba(36,58,25,.025); min-width: 0; }
+        .stat-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+        .stat-icon { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 9px; background: var(--green-100); color: var(--green-700); font-size: 14px; }
         .stat-icon.amber { background: #fbf1df; color: #ad7b25; }
         .stat-icon.sage { background: #e9f1ed; color: #4f7968; }
         .stat-icon.lilac { background: #f0edf8; color: #7865a4; }
-        .stat-kicker { color: var(--muted); font-size: 11px; font-weight: 600; }
-        .stat-value { margin-top: 17px; font: 800 29px/1 "Manrope", sans-serif; color: #e48e1e;; letter-spacing: -.8px; }
-        .stat-foot { margin-top: 9px; font-size: 11px; color: var(--muted); line-height: 1.5; }
+        .stat-kicker { color: var(--muted); font-size: 10.5px; font-weight: 600; }
+        .stat-value { margin-top: 8px; font: 800 22px/1 "Manrope", sans-serif; color: #e48e1e; letter-spacing: -.5px; }
+        .stat-foot { margin-top: 5px; font-size: 10px; color: var(--muted); line-height: 1.4; }
         .stat-foot i { color: var(--green-600); margin-right: 4px; }
-        .panel-grid { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(280px, .85fr); gap: 20px; align-items: start; }
-        .panel { background: #fff; border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); min-width: 0; }
-        .panel-head { padding: 21px 22px 17px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid #eff2e9; }
-        .panel-head h2 { font: 800 15px/1.35 "Manrope", sans-serif; margin: 0; color: var(--green-950); }
-        .panel-head p { margin: 5px 0 0; color: var(--muted); font-size: 11px; }
-        .panel-body { padding: 19px 22px 22px; }
-        .search-form { display: flex; gap: 8px; width: min(100%, 390px); }
-        .search-box { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 10px; padding: 0 11px; background: #fcfdf9; }
-        .search-box i { color: #8b9780; font-size: 12px; }
-        .search-box input { width: 100%; min-width: 0; padding: 10px 0; border: 0; outline: 0; background: transparent; color: var(--ink); font-size: 12px; }
-        .btn { border: 0; display: inline-flex; align-items: center; justify-content: center; gap: 8px; border-radius: 10px; padding: 10px 13px; background: var(--green-700); color: #fff; font-size: 12px; font-weight: 700; cursor: pointer; }
+        .panel-grid { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(280px, .85fr); gap: 14px; align-items: start; }
+        .panel { background: #fff; border: 1px solid var(--line); border-radius: 13px; box-shadow: 0 2px 8px rgba(36,58,25,.025); min-width: 0; }
+        .panel-head { padding: 13px 16px 11px; display: flex; align-items: center; justify-content: space-between; gap: 10px; border-bottom: 1px solid #eff2e9; }
+        .panel-head h2 { font: 800 13.5px/1.35 "Manrope", sans-serif; margin: 0; color: var(--green-950); }
+        .panel-head p { margin: 2px 0 0; color: var(--muted); font-size: 10.5px; }
+        .panel-body { padding: 14px 16px 16px; }
+        .search-form { display: flex; gap: 7px; width: min(100%, 360px); }
+        .search-box { display: flex; align-items: center; gap: 7px; flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 0 10px; background: #fcfdf9; }
+        .search-box i { color: #8b9780; font-size: 11px; }
+        .search-box input { width: 100%; min-width: 0; padding: 8px 0; border: 0; outline: 0; background: transparent; color: var(--ink); font-size: 11.5px; }
+        .btn { border: 0; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border-radius: 8px; padding: 8px 12px; background: var(--green-700); color: #fff; font-size: 11.5px; font-weight: 700; cursor: pointer; transition: .18s; }
         .btn:hover { background: var(--green-900); }
         .btn-light { background: var(--green-50); color: var(--green-800); border: 1px solid var(--line); }
         .btn-light:hover { background: var(--green-100); }
         .table-wrap { overflow-x: auto; }
         table { border-collapse: collapse; width: 100%; min-width: 570px; }
-        th { padding: 11px 12px; text-align: left; color: #849078; background: #fafbf7; font-size: 10px; text-transform: uppercase; letter-spacing: .8px; font-weight: 800; white-space: nowrap; }
-        td { padding: 14px 12px; border-top: 1px solid #f0f2eb; font-size: 12px; vertical-align: top; }
-        td:first-child, th:first-child { padding-left: 22px; }
-        td:last-child, th:last-child { padding-right: 22px; }
-        .customer-cell { display: flex; align-items: center; gap: 10px; min-width: 170px; }
-        .customer-avatar { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 11px; background: var(--green-100); color: var(--green-800); font-size: 11px; font-weight: 800; flex: 0 0 auto; }
-        .customer-cell strong { display: block; font-size: 12px; color: #34412d; }
-        .customer-cell small { display: block; color: #87907e; font-size: 10px; margin-top: 4px; }
-        .muted-cell { color: #77816d; max-width: 180px; line-height: 1.5; }
-        .status-pill { display: inline-flex; align-items: center; gap: 5px; border-radius: 100px; padding: 6px 9px; background: #edf5e7; color: #557d2d; font-size: 10px; font-weight: 700; white-space: nowrap; }
-        .status-pill i { font-size: 7px; }
-        .empty { padding: 32px 20px; text-align: center; color: var(--muted); line-height: 1.7; }
-        .empty i { display: block; margin-bottom: 10px; color: #a9bb96; font-size: 25px; }
-        .notice { margin: 0 22px 16px; border: 1px solid #f0dfb8; background: #fff9eb; color: #805e20; padding: 11px 13px; border-radius: 10px; font-size: 12px; line-height: 1.5; }
+        th { padding: 9px 12px; text-align: left; color: #849078; background: #fafbf7; font-size: 9.5px; text-transform: uppercase; letter-spacing: .7px; font-weight: 800; white-space: nowrap; }
+        td { padding: 10px 12px; border-top: 1px solid #f0f2eb; font-size: 11.5px; vertical-align: top; }
+        td:first-child, th:first-child { padding-left: 16px; }
+        td:last-child, th:last-child { padding-right: 16px; }
+        .customer-cell { display: flex; align-items: center; gap: 9px; min-width: 170px; }
+        .customer-avatar { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 9px; background: var(--green-100); color: var(--green-800); font-size: 11px; font-weight: 800; flex: 0 0 auto; }
+        .customer-cell strong { display: block; font-size: 11.5px; color: #34412d; }
+        .customer-cell small { display: block; color: #87907e; font-size: 9.5px; margin-top: 2px; }
+        .muted-cell { color: #77816d; max-width: 180px; line-height: 1.45; }
+        .status-pill { display: inline-flex; align-items: center; gap: 4px; border-radius: 100px; padding: 5px 8px; background: #edf5e7; color: #557d2d; font-size: 9.5px; font-weight: 700; white-space: nowrap; }
+        .status-pill i { font-size: 6px; }
+        .empty { padding: 28px 16px; text-align: center; color: var(--muted); line-height: 1.6; }
+        .empty i { display: block; margin-bottom: 8px; color: #a9bb96; font-size: 22px; }
+        .notice { margin: 0 16px 14px; border: 1px solid #f0dfb8; background: #fff9eb; color: #805e20; padding: 9px 12px; border-radius: 8px; font-size: 11.5px; line-height: 1.45; }
         .activity-list { display: grid; }
         .activity-item { display: flex; align-items: flex-start; gap: 11px; padding: 13px 0; border-bottom: 1px solid #f0f2eb; }
         .activity-item:first-child { padding-top: 0; }
@@ -811,31 +1890,983 @@ if (count($nameParts) >= 2) {
     width: 100%;
 }
 
+        /* ===== PENGELOLAAN PESANAN STYLING OPTIMAL ===== */
         .order-summary-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;padding:18px 22px 0}
         .order-mini-stat{border:1px solid var(--line);background:#fcfdf9;border-radius:13px;padding:13px}
         .order-mini-stat strong{display:block;font:800 23px "Manrope",sans-serif;color:var(--ink);margin-top:7px}
         .order-mini-stat span{font-size:11px;color:var(--muted)}
-        .order-tools{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-        .order-filter{border:1px solid var(--line);background:#fff;color:var(--ink);border-radius:10px;padding:10px 12px;font:inherit;font-size:12px}
-        .order-table{min-width:900px}
-        .order-number{font-weight:800;color:var(--green-800);display:block}
-        .order-sub{display:block;color:var(--muted);font-size:10px;margin-top:4px;line-height:1.5}
-        .order-services{max-width:240px;white-space:normal;line-height:1.6;color:#5f6c56}
-        .order-total{font-weight:800;white-space:nowrap}
+
+        .order-filter-toolbar{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:16px;background:#f8fafc;padding:12px 16px;border-radius:12px;border:1px solid #e2e8f0}
+        .filter-controls{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+        .filter-group{display:flex;flex-direction:column;gap:3px}
+        .filter-group label{font-size:10.5px;font-weight:800;color:#64748b;text-transform:uppercase;letter-spacing:.04em}
+        .filter-group select{border:1px solid #cbd5e1;border-radius:8px;padding:7px 10px;font-size:12px;font-weight:700;background:#fff;color:#0f172a;cursor:pointer}
+        .filter-group select:focus{outline:none;border-color:var(--green-700)}
+        .btn-reset-filter{display:inline-flex;align-items:center;gap:5px;background:#fff;border:1px solid #cbd5e1;border-radius:8px;padding:7px 12px;font-size:11.5px;font-weight:700;color:#64748b;text-decoration:none;transition:all .2s;align-self:flex-end}
+        .btn-reset-filter:hover{background:#f1f5f9;color:#0f172a}
+
+        .order-table{min-width:1250px;width:100%;border-collapse:separate;border-spacing:0}
+        .order-table th{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;background:#f8fafc;color:#475569;padding:11px 12px;border-bottom:2px solid #e2e8f0;white-space:nowrap;font-weight:800}
+        .order-table td{padding:12px;border-bottom:1px solid #eef2f6;vertical-align:middle;font-size:12px}
+
+        /* Kelompok Tanggal Separator */
+        .date-group-row td{padding:12px 0 6px 0;background:transparent;border:none}
+        .date-group-bar{display:flex;align-items:center;justify-content:space-between;padding:8px 14px;border-radius:9px;font-weight:800;font-size:11.5px;letter-spacing:.03em}
+        .date-group-left{display:flex;align-items:center;gap:8px}
+        .date-group-badge{font-size:10.5px;font-weight:800;padding:2px 9px;border-radius:999px}
+
+        .date-group-today{background:#edf7e9;border:1px solid #c9e4bc;color:#1e3a17}
+        .date-group-today .date-group-badge{background:#2e5926;color:#fff}
+        .date-group-yesterday{background:#f0fdfa;border:1px solid #ccfbf1;color:#0f766e}
+        .date-group-yesterday .date-group-badge{background:#0d9488;color:#fff}
+        .date-group-past{background:#f8fafc;border:1px solid #e2e8f0;color:#475569}
+        .date-group-past .date-group-badge{background:#64748b;color:#fff}
+
+        /* Kolom 1: Nomor Pesanan */
+        .order-number-pill{font-family:monospace;font-size:11.5px;font-weight:800;color:#1e3a17;background:#f4f8f2;border:1px solid #d4eac9;border-radius:6px;padding:3px 7px;display:inline-block;word-break:break-all}
+        .order-id-sub{display:block;font-size:10.5px;color:var(--muted);margin-top:3px;font-weight:600}
+
+        /* Kolom 2: Tanggal Masuk */
+        .order-time-text{display:block;font-size:12.5px;font-weight:800;color:#0f172a;white-space:nowrap}
+        .order-date-text{display:block;font-size:11px;color:var(--muted);margin-top:2px;white-space:nowrap}
+
+        /* Kolom 3: Pelanggan & Usaha */
+        .cust-name{font-size:13px;font-weight:800;color:#0f172a;display:block}
+        .cust-biz-tag{display:inline-flex;align-items:center;gap:4px;font-size:10.5px;font-weight:700;color:#166534;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:5px;padding:2px 7px;margin:3px 0;max-width:210px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+        .cust-wa-link{display:inline-flex;align-items:center;gap:4px;font-size:11px;color:#16a34a;text-decoration:none;font-weight:700;margin-top:2px}
+        .cust-wa-link:hover{text-decoration:underline}
+        .cust-email-sub{display:block;font-size:10.5px;color:#64748b;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:200px}
+
+        /* Kolom 4: Layanan */
+        .service-chip-list{display:flex;flex-direction:column;gap:4px;max-width:230px}
+        .service-chip{display:flex;align-items:center;justify-content:space-between;gap:6px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:3px 7px;font-size:11px}
+        .service-chip-name{font-weight:700;color:#334155;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:170px}
+        .service-chip-qty{font-weight:800;color:#2e5926;background:#edf7e9;padding:1px 5px;border-radius:4px;font-size:10px;white-space:nowrap}
+        .btn-more-services{background:none;border:1px dashed #cbd5e1;border-radius:6px;color:#0284c7;font-size:10.5px;font-weight:700;padding:3px 6px;cursor:pointer;text-align:left;transition:all .2s;width:100%}
+        .btn-more-services:hover{background:#f0f9ff;border-color:#0284c7}
+
+        /* Kolom 5: Catatan Pelanggan */
+        .note-card-box{background:#fffbeb;border:1px solid #fef3c7;border-left:3px solid #f59e0b;border-radius:6px;padding:5px 8px;font-size:11px;color:#78350f;line-height:1.4;max-width:200px;overflow-wrap:break-word}
+        .btn-note-detail{background:none;border:none;color:#b45309;font-weight:800;font-size:10px;cursor:pointer;text-decoration:underline;padding:0;display:inline;margin-left:4px}
+        .note-empty-pill{font-size:11px;color:#94a3b8;font-style:italic}
+
+        /* Kolom 6: Total Tagihan */
+        .order-total-price{display:block;font-size:13.5px;font-weight:800;color:#0f172a;white-space:nowrap}
+        .order-total-qty{display:block;font-size:10.5px;color:#64748b;margin-top:2px;white-space:nowrap}
+
+        /* Kolom 7: Pembayaran */
+        .pay-badge{display:inline-flex;align-items:center;gap:4px;border-radius:6px;padding:3px 8px;font-size:10.5px;font-weight:800;white-space:nowrap}
+        .pay-badge.paid{background:#dcfce7;color:#166534;border:1px solid #bbf7d0}
+        .pay-badge.pending{background:#fef3c7;color:#92400e;border:1px solid #fde68a}
+        .pay-badge.failed{background:#fee2e2;color:#991b1b;border:1px solid #fecaca}
+        .pay-badge.expired{background:#f1f5f9;color:#64748b;border:1px solid #cbd5e1}
+        .pay-channel-pill{display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:800;color:#002b49;background:#e0f2fe;padding:2px 6px;border-radius:4px;margin-top:3px;letter-spacing:.02em}
+        .pay-midtrans-id{font-family:monospace;font-size:10px;color:#64748b;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:140px}
+        .pay-settle-date{font-size:10px;color:#166534;font-weight:700;margin-top:2px;white-space:nowrap}
+
+        /* Kolom 8: Progres */
+        .status-pill{display:inline-flex;align-items:center;gap:4px;border-radius:100px;padding:3px 7px;font-size:9.5px;font-weight:800;white-space:nowrap}
         .status-pill.pending{background:#fff4df;color:#966719}
         .status-pill.processing{background:#eaf2fb;color:#3d6e9e}
         .status-pill.completed{background:#e8f5e9;color:#347448}
         .status-pill.cancelled{background:#fcebea;color:#a34b45}
-        .status-form{display:flex;gap:6px;align-items:center;min-width:185px}
-        .status-form select{min-width:105px;border:1px solid var(--line);border-radius:8px;padding:8px;background:#fff;color:var(--ink);font:inherit;font-size:11px}
-        .status-form button{border:0;border-radius:8px;background:var(--green-700);color:#fff;padding:8px 10px;font-size:11px;font-weight:700;cursor:pointer}
+        .status-compact-form{display:flex;gap:4px;align-items:center;margin-top:5px}
+        .status-compact-form select{border:1px solid var(--line);border-radius:6px;padding:4px 6px;font-size:10.5px;background:#fff;color:var(--ink)}
+        .status-compact-form button{border:none;border-radius:6px;background:var(--green-700);color:#fff;font-size:10.5px;font-weight:700;padding:4px 7px;cursor:pointer;transition:all .2s}
+        .status-compact-form button:hover{background:var(--green-800)}
+
+        /* Kolom 9: Aksi */
+        .order-action-stack{display:flex;flex-direction:column;gap:4px;min-width:95px}
+        .btn-act-detail{display:inline-flex;align-items:center;justify-content:center;gap:4px;background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;border-radius:6px;padding:4px 7px;font-size:10.5px;font-weight:700;cursor:pointer;transition:all .2s;text-decoration:none}
+        .btn-act-detail:hover{background:#dbeafe}
+        .btn-act-receipt{display:inline-flex;align-items:center;justify-content:center;gap:4px;background:#f8fafc;color:#334155;border:1px solid #cbd5e1;border-radius:6px;padding:4px 7px;font-size:10.5px;font-weight:700;cursor:pointer;transition:all .2s;text-decoration:none}
+        .btn-act-receipt:hover{background:#e2e8f0;color:#0f172a}
+        .btn-act-invoice{display:inline-flex;align-items:center;justify-content:center;gap:4px;background:#3a6932;color:#fff;border-radius:6px;padding:4px 7px;font-size:10.5px;font-weight:700;text-decoration:none;transition:all .2s}
+        .btn-act-invoice:hover{background:#24461f}
+
         .order-notice{margin:15px 22px 0;padding:11px 13px;border-radius:10px;font-size:12px;line-height:1.5}
         .order-notice.success{background:#edf7e9;border:1px solid #d8e9ca;color:#42652f}
         .order-notice.error{background:#fff0ee;border:1px solid #f0d3cf;color:#99443b}
-        .order-detail{font-size:11px;color:var(--muted);line-height:1.6;margin-top:5px;max-width:220px;overflow-wrap:anywhere}
-        @media(max-width:900px){.order-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
-        @media(max-width:760px){.order-summary-grid{padding:15px 16px 0}.order-notice{margin:14px 16px 0}}
 
+        /* Modal Detail Pesanan Styling */
+        .modal-overlay{display:none;position:fixed;inset:0;background:rgba(15,23,42,0.65);z-index:99999;backdrop-filter:blur(4px);align-items:center;justify-content:center;padding:20px}
+        .modal-dialog-box{background:#fff;border-radius:20px;max-width:740px;width:100%;max-height:90vh;overflow-y:auto;box-shadow:0 25px 50px -12px rgba(0,0,0,0.25);border:1px solid #e2e8f0}
+        .modal-dialog-header{background:#f8fafc;padding:18px 24px;border-bottom:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;z-index:10}
+        .modal-dialog-body{padding:24px}
+        .modal-section-card{background:#f8fafc;border:1px solid #e2e8f0;border-radius:14px;padding:16px;margin-bottom:16px}
+        .modal-section-title{font-size:11px;font-weight:800;color:#64748b;text-transform:uppercase;letter-spacing:.05em;margin-bottom:12px;display:flex;align-items:center;gap:6px}
+        .modal-info-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:12.5px}
+        .modal-info-row{display:flex;flex-direction:column;gap:2px}
+        .modal-info-row label{font-size:10.5px;color:#64748b;font-weight:600}
+        .modal-info-row strong{color:#0f172a;font-weight:700}
+        .modal-services-table{width:100%;border-collapse:collapse;margin-top:8px;font-size:12px}
+        .modal-services-table th{background:#eef2f6;padding:8px 10px;text-align:left;font-weight:800;color:#334155;border-bottom:1px solid #cbd5e1}
+        .modal-services-table td{padding:8px 10px;border-bottom:1px solid #e2e8f0;color:#1e293b}
+        .modal-total-highlight{font-size:18px;font-weight:800;color:#166534}
+
+        @media(max-width:900px){.order-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.modal-info-grid{grid-template-columns:1fr}}
+        @media(max-width:760px){.order-summary-grid{padding:15px 16px 0}.order-notice{margin:14px 16px 0}.order-filter-toolbar{flex-direction:column;align-items:stretch}}
+
+        /* CMS Per-Section Styling */
+        .cms-nav-pills {
+            display: flex;
+            gap: 7px;
+            flex-wrap: wrap;
+            margin-bottom: 18px;
+            background: #ffffff;
+            padding: 8px 12px;
+            border-radius: 12px;
+            border: 1px solid var(--line);
+            box-shadow: 0 2px 6px rgba(0,0,0,0.02);
+        }
+        .cms-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 11.5px;
+            font-weight: 700;
+            color: #475569;
+            padding: 6px 12px;
+            border-radius: 8px;
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            text-decoration: none;
+            transition: all 0.2s ease;
+        }
+        .cms-pill:hover, .cms-pill.active {
+            background: var(--green);
+            color: #fff;
+            border-color: var(--green);
+        }
+        .admin-team-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+            gap: 14px;
+        }
+        .admin-team-card {
+            background: #fbfdf9;
+            border: 1px solid #dce9bd;
+            border-radius: 14px;
+            padding: 14px;
+            display: grid;
+            gap: 10px;
+            position: relative;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.02);
+        }
+        .admin-team-card.owner-card {
+            background: #fffdf5;
+            border-color: #fef08a;
+            box-shadow: 0 3px 10px rgba(234, 179, 8, 0.06);
+        }
+        .admin-team-photo-preview {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            object-fit: cover;
+            border: 2.5px solid var(--green);
+            background: #ffffff;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.06);
+        }
+        .admin-badge-owner {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 10px;
+            font-weight: 800;
+            text-transform: uppercase;
+            background: #fef08a;
+            color: #854d0e;
+            padding: 3px 9px;
+            border-radius: 999px;
+            width: fit-content;
+        }
+        .admin-badge-member {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 10px;
+            font-weight: 800;
+            text-transform: uppercase;
+            background: var(--green-soft);
+            color: var(--green);
+            padding: 3px 9px;
+            border-radius: 999px;
+            width: fit-content;
+        }
+        .cms-section-card {
+            margin-bottom: 18px;
+            border-radius: 14px;
+            border: 1px solid var(--line);
+            background: #ffffff;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.02);
+        }
+        .cms-section-card .panel-head {
+            background: #fafbf8;
+            border-bottom: 1px solid var(--line);
+            padding: 12px 18px;
+        }
+        .cms-section-card .panel-body {
+            padding: 16px 18px 20px;
+        }
+
+        /* ROOM CHAT & KONSULTASI ADMIN */
+        .admin-chat-grid {
+            display: grid;
+            grid-template-columns: 330px minmax(0, 1fr);
+            gap: 16px;
+            align-items: stretch;
+        }
+        @media (max-width: 992px) {
+            .admin-chat-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+        .consult-list-box {
+            background: #ffffff;
+            border: 1px solid var(--line);
+            border-radius: 14px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            height: 560px;
+            max-height: 560px;
+        }
+        .consult-list-head {
+            padding: 12px 16px;
+            background: #f8faf5;
+            border-bottom: 1px solid var(--line);
+        }
+        .consult-list-body {
+            overflow-y: auto;
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .consult-card-item {
+            padding: 11px 13px;
+            border-radius: 10px;
+            border: 1px solid var(--line);
+            background: #ffffff;
+            display: block;
+            text-decoration: none;
+            color: inherit;
+            transition: all 0.2s ease;
+        }
+        .consult-card-item:hover {
+            border-color: #5b8121;
+            background: #fcfdf9;
+        }
+        .consult-card-item.active {
+            border-color: #5b8121;
+            background: #f7faf2;
+            box-shadow: 0 3px 10px rgba(91, 129, 33, 0.08);
+        }
+        .consult-card-item.status-pending-acc {
+            border-left: 3.5px solid #e48e1e;
+        }
+        .chat-room-desk {
+            background: #ffffff;
+            border: 1px solid var(--line);
+            border-radius: 14px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            height: 560px;
+        }
+        .chat-room-head {
+            padding: 12px 18px;
+            background: #f8faf5;
+            border-bottom: 1px solid var(--line);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+        .chat-room-scroll {
+            flex: 1;
+            padding: 16px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            background: #fafbf8;
+        }
+        .chat-room-msg {
+            display: flex;
+            flex-direction: column;
+            max-width: 82%;
+        }
+        .chat-room-msg.mitra {
+            align-self: flex-start;
+        }
+        .chat-room-msg.admin {
+            align-self: flex-end;
+            align-items: flex-end;
+        }
+        .chat-bubble {
+            padding: 10px 14px;
+            font-size: 12.5px;
+            line-height: 1.5;
+            word-break: break-word;
+        }
+        .chat-bubble.mitra-bubble {
+            background: #ffffff;
+            color: #1e293b;
+            border: 1px solid #e2e8f0;
+            border-radius: 14px 14px 14px 4px;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.02);
+        }
+        .chat-bubble.admin-bubble {
+            background: #5b8121;
+            color: #ffffff;
+            border-radius: 14px 14px 4px 14px;
+            box-shadow: 0 2px 8px rgba(91, 129, 33, 0.16);
+        }
+
+        /* Lampiran di dalam Bubble Chat */
+        .chat-attachments-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-top: 8px;
+        }
+        .chat-att-card {
+            border-radius: 10px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .chat-att-card.chat-att-image {
+            max-width: 270px;
+        }
+        .chat-thumb-img {
+            max-width: 260px;
+            max-height: 220px;
+            width: auto;
+            height: auto;
+            object-fit: contain;
+            border-radius: 8px;
+            background: #ffffff;
+            display: block;
+            border: 1px solid rgba(0,0,0,0.08);
+            cursor: pointer;
+            transition: transform 0.18s ease;
+        }
+        .chat-thumb-img:hover {
+            transform: scale(1.02);
+        }
+        .chat-player-video {
+            max-width: 280px;
+            max-height: 220px;
+            width: 100%;
+            border-radius: 8px;
+            background: #000000;
+            display: block;
+        }
+        .chat-att-meta {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            font-size: 11px;
+            padding: 4px 6px;
+        }
+        .chat-att-name {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            font-weight: 700;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .chat-att-size {
+            font-size: 10px;
+            opacity: 0.85;
+            white-space: nowrap;
+        }
+        .chat-att-dl {
+            color: inherit;
+            text-decoration: none;
+            padding: 2px 6px;
+            border-radius: 4px;
+            opacity: 0.85;
+            transition: opacity 0.2s;
+        }
+        .chat-att-dl:hover {
+            opacity: 1;
+        }
+        .chat-att-doc {
+            display: flex;
+            flex-direction: row;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 12px;
+            border-radius: 10px;
+            min-width: 230px;
+            max-width: 340px;
+        }
+        .chat-doc-icon {
+            width: 36px;
+            height: 36px;
+            border-radius: 8px;
+            display: grid;
+            place-items: center;
+            font-size: 18px;
+            flex-shrink: 0;
+        }
+        .chat-bubble.mitra-bubble .chat-att-doc {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            color: #1e293b;
+        }
+        .chat-bubble.mitra-bubble .chat-doc-icon.pdf { background: #fee2e2; color: #dc2626; }
+        .chat-bubble.mitra-bubble .chat-doc-icon.word { background: #dbeafe; color: #2563eb; }
+        .chat-bubble.mitra-bubble .chat-doc-icon.excel { background: #dcfce7; color: #16a34a; }
+        .chat-bubble.mitra-bubble .chat-doc-icon.powerpoint { background: #ffedd5; color: #ea580c; }
+        .chat-bubble.mitra-bubble .chat-doc-icon.text { background: #f1f5f9; color: #475569; }
+        .chat-bubble.mitra-bubble .chat-doc-icon.default { background: #f1f5f9; color: #64748b; }
+        .chat-bubble.mitra-bubble .btn-chat-doc {
+            background: #ffffff;
+            border: 1px solid #cbd5e1;
+            color: #334155;
+            text-decoration: none;
+            font-size: 11px;
+            font-weight: 700;
+            padding: 5px 9px;
+            border-radius: 6px;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            transition: all 0.2s;
+        }
+        .chat-bubble.mitra-bubble .btn-chat-doc:hover {
+            background: #f1f5f9;
+            color: #0f172a;
+        }
+
+        .chat-bubble.admin-bubble .chat-att-doc {
+            background: rgba(255, 255, 255, 0.16);
+            border: 1px solid rgba(255, 255, 255, 0.25);
+            color: #ffffff;
+        }
+        .chat-bubble.admin-bubble .chat-doc-icon {
+            background: rgba(255, 255, 255, 0.22);
+            color: #ffffff;
+        }
+        .chat-bubble.admin-bubble .btn-chat-doc {
+            background: rgba(255, 255, 255, 0.22);
+            border: 1px solid rgba(255, 255, 255, 0.38);
+            color: #ffffff;
+            text-decoration: none;
+            font-size: 11px;
+            font-weight: 700;
+            padding: 5px 9px;
+            border-radius: 6px;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            transition: background 0.2s;
+        }
+        .chat-bubble.admin-bubble .btn-chat-doc:hover {
+            background: rgba(255, 255, 255, 0.35);
+        }
+
+        .chat-doc-info {
+            flex: 1;
+            min-width: 0;
+        }
+        .chat-doc-title {
+            display: block;
+            font-size: 12px;
+            font-weight: 700;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .chat-doc-sub {
+            display: block;
+            font-size: 10px;
+            opacity: 0.82;
+            margin-top: 2px;
+        }
+        .chat-doc-actions {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            flex-shrink: 0;
+        }
+
+        /* Preview Area File Input Admin */
+        .admin-file-preview-wrap {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            padding: 8px 10px;
+            background: #f8fafc;
+            border: 1px dashed #cbd5e1;
+            border-radius: 8px;
+            margin-bottom: 8px;
+        }
+        .admin-file-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 8px;
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-radius: 6px;
+            font-size: 11px;
+            color: #334155;
+            max-width: 220px;
+        }
+        .admin-file-chip span {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .admin-file-chip button {
+            background: none;
+            border: none;
+            color: #dc2626;
+            cursor: pointer;
+            padding: 0 2px;
+            font-size: 14px;
+            line-height: 1;
+        }
+
+        /* Lightbox Image Modal */
+        .chat-lightbox {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.82);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 99999;
+            padding: 20px;
+        }
+        .chat-lightbox.show {
+            display: flex;
+        }
+        .chat-lightbox-inner {
+            max-width: 90vw;
+            max-height: 90vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+        }
+        .chat-lightbox-img {
+            max-width: 85vw;
+            max-height: 80vh;
+            object-fit: contain;
+            border-radius: 10px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            background: #111;
+        }
+        .chat-lightbox-bar {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            background: rgba(255,255,255,0.18);
+            backdrop-filter: blur(8px);
+            padding: 7px 16px;
+            border-radius: 99px;
+            color: #fff;
+            font-size: 12px;
+        }
+        .chat-lightbox-bar a, .chat-lightbox-bar button {
+            color: #fff;
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 13px;
+            text-decoration: none;
+        }
+        .chat-time-meta {
+            font-size: 10px;
+            margin-top: 3px;
+            color: #94a3b8;
+        }
+        .chat-room-footer {
+            padding: 12px 16px;
+            background: #ffffff;
+            border-top: 1px solid var(--line);
+        }
+        .badge-acc-pending {
+            background: #fef3c7;
+            color: #b45309;
+            font-weight: 800;
+            font-size: 10px;
+            padding: 3px 9px;
+            border-radius: 99px;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .badge-acc-approved {
+            background: #dcfce7;
+            color: #15803d;
+            font-weight: 800;
+            font-size: 10px;
+            padding: 3px 9px;
+            border-radius: 99px;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .badge-acc-completed {
+            background: #f1f5f9;
+            color: #64748b;
+            font-weight: 800;
+            font-size: 10px;
+            padding: 3px 9px;
+            border-radius: 99px;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .policy-edit-box {
+            background: #ffffff;
+            border: 1px solid var(--line);
+            border-radius: 14px;
+            padding: 18px 20px;
+        }
+        .policy-alert {
+            background: #f0fdf4;
+            border: 1px solid #bbf7d0;
+            border-radius: 10px;
+            padding: 11px 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 12px;
+            color: #166534;
+            margin-bottom: 16px;
+        }
+        .art-admin-thumb {
+            width: 58px;
+            height: 42px;
+            border-radius: 8px;
+            object-fit: cover;
+            background: #f1f5f9;
+            border: 1px solid var(--line);
+        }
+        .badge-featured {
+            background: #fef3c7;
+            color: #d97706;
+            font-weight: 800;
+            font-size: 10px;
+            padding: 3px 8px;
+            border-radius: 99px;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .badge-published {
+            background: #dcfce7;
+            color: #15803d;
+            font-weight: 800;
+            font-size: 10px;
+            padding: 3px 8px;
+            border-radius: 99px;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .badge-draft {
+            background: #f1f5f9;
+            color: #64748b;
+            font-weight: 800;
+            font-size: 10px;
+            padding: 3px 8px;
+            border-radius: 99px;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .badge-cat-pill {
+            background: rgba(91, 129, 33, 0.1);
+            color: var(--green);
+            font-weight: 700;
+            font-size: 11px;
+            padding: 2px 8px;
+            border-radius: 6px;
+            display: inline-block;
+        }
+
+        /* ===== RICH TEXT EDITOR & FORM ARTIKEL MODERN ===== */
+        .article-form-grid-layout {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) 350px;
+            gap: 20px;
+            align-items: start;
+        }
+        @media (max-width: 1024px) {
+            .article-form-grid-layout {
+                grid-template-columns: 1fr;
+            }
+        }
+        .article-card-section {
+            background: #ffffff;
+            border: 1px solid var(--line);
+            border-radius: 14px;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.02);
+        }
+        .article-section-header {
+            background: #fafbf8;
+            border-bottom: 1px solid var(--line);
+            padding: 13px 18px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .article-section-icon {
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            background: var(--green-soft);
+            color: var(--green);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            flex-shrink: 0;
+        }
+        .article-section-title {
+            margin: 0;
+            font-size: 13.5px;
+            font-weight: 800;
+            color: #0f172a;
+        }
+        .article-section-subtitle {
+            margin: 2px 0 0;
+            font-size: 11.5px;
+            color: var(--muted);
+        }
+        .article-section-body {
+            padding: 16px 18px;
+        }
+        .form-field-label {
+            display: block;
+            font-size: 12px;
+            font-weight: 700;
+            color: #1e293b;
+            margin-bottom: 6px;
+        }
+        .required-star {
+            color: #ef4444;
+        }
+        .article-input-title {
+            font-size: 15px !important;
+            font-weight: 700;
+            padding: 11px 14px !important;
+        }
+
+        /* RICH TEXT EDITOR (WYSIWYG) */
+        .rte-editor-container {
+            background: #ffffff;
+            border-radius: 0 0 14px 14px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+        .rte-toolbar {
+            background: #f8fafc;
+            border-bottom: 1px solid var(--line);
+            padding: 8px 12px;
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 6px;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+        .rte-tool-group {
+            display: flex;
+            align-items: center;
+            gap: 3px;
+        }
+        .rte-divider {
+            width: 1px;
+            height: 22px;
+            background: #cbd5e1;
+            margin: 0 4px;
+        }
+        .rte-btn {
+            width: 32px;
+            height: 32px;
+            border-radius: 6px;
+            border: 1px solid transparent;
+            background: transparent;
+            color: #475569;
+            font-size: 13px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+        .rte-btn:hover {
+            background: #e2e8f0;
+            color: #0f172a;
+        }
+        .rte-btn.active {
+            background: var(--green-soft);
+            color: var(--green);
+            border-color: rgba(91, 129, 33, 0.3);
+            font-weight: 700;
+        }
+        .rte-select {
+            height: 32px;
+            padding: 0 8px;
+            border-radius: 6px;
+            border: 1px solid #cbd5e1;
+            background: #ffffff;
+            color: #334155;
+            font-size: 12px;
+            font-family: inherit;
+            font-weight: 600;
+            cursor: pointer;
+            outline: none;
+            transition: border-color 0.15s ease;
+        }
+        .rte-select:focus {
+            border-color: var(--green);
+        }
+        .rte-canvas {
+            min-height: 340px;
+            max-height: 600px;
+            overflow-y: auto;
+            padding: 20px 22px;
+            outline: none;
+            font-family: 'DM Sans', sans-serif;
+            font-size: 15px;
+            line-height: 1.8;
+            color: #1e293b;
+            background: #ffffff;
+        }
+        .rte-canvas:empty:before {
+            content: attr(data-placeholder);
+            color: #94a3b8;
+            font-style: italic;
+            pointer-events: none;
+        }
+        .rte-canvas h1 {
+            font-size: 25px;
+            font-weight: 800;
+            margin: 20px 0 12px;
+            color: #0f172a;
+            line-height: 1.3;
+        }
+        .rte-canvas h2 {
+            font-size: 20px;
+            font-weight: 800;
+            margin: 18px 0 10px;
+            color: #0f172a;
+            line-height: 1.35;
+        }
+        .rte-canvas h3 {
+            font-size: 17px;
+            font-weight: 700;
+            margin: 14px 0 8px;
+            color: #1e293b;
+            line-height: 1.4;
+        }
+        .rte-canvas p {
+            margin: 0 0 14px;
+        }
+        .rte-canvas ul, .rte-canvas ol {
+            margin: 0 0 16px;
+            padding-left: 24px;
+        }
+        .rte-canvas li {
+            margin-bottom: 6px;
+        }
+        .rte-canvas a {
+            color: var(--green);
+            text-decoration: underline;
+            font-weight: 600;
+        }
+        .rte-canvas blockquote {
+            margin: 16px 0;
+            padding: 12px 18px;
+            background: var(--green-soft);
+            border-left: 4px solid var(--green);
+            border-radius: 0 8px 8px 0;
+            font-style: italic;
+            color: var(--green-dark);
+        }
+        .rte-footer {
+            padding: 8px 18px;
+            background: #f8fafc;
+            border-top: 1px solid var(--line);
+            font-size: 11.5px;
+            color: var(--muted);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        /* TOGGLE CARDS STATUS */
+        .pub-toggle-card {
+            background: #f8fafc;
+            border: 1px solid var(--line);
+            border-radius: 10px;
+            padding: 12px 14px;
+            transition: background 0.15s ease;
+        }
+        .pub-toggle-card:hover {
+            background: #f1f5f9;
+        }
+        .pub-toggle-label {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            cursor: pointer;
+        }
+        .pub-checkbox {
+            width: 17px;
+            height: 17px;
+            margin-top: 2px;
+            cursor: pointer;
+        }
+        .pub-checkbox.green {
+            accent-color: var(--green);
+        }
+        .pub-checkbox.orange {
+            accent-color: #d97706;
+        }
+
+        /* MODAL INSERT LINK */
+        .rte-modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(15, 23, 42, 0.55);
+            backdrop-filter: blur(4px);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 99999;
+            padding: 16px;
+        }
+        .rte-modal-overlay.show {
+            display: flex;
+        }
+        .rte-modal-card {
+            background: #ffffff;
+            border-radius: 14px;
+            padding: 22px 24px;
+            width: 100%;
+            max-width: 440px;
+            box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1), 0 10px 10px -5px rgba(0,0,0,0.04);
+        }
     </style>
 </head>
 <body class="page-<?= e($page) ?>">
@@ -858,8 +2889,17 @@ if (count($nameParts) >= 2) {
             <a href="admin_dashboard.php?page=dashboard" class="side-link <?= $page === 'dashboard' ? 'active' : '' ?>"><i class="fa-solid fa-chart-pie"></i> Dashboard</a>
             <a href="admin_dashboard.php?page=orders" class="side-link <?= $page === 'orders' ? 'active' : '' ?>"><i class="fa-solid fa-cart-shopping"></i> Pengelolaan Pesanan</a>
             <a href="admin_dashboard.php?page=customers" class="side-link <?= $page === 'customers' ? 'active' : '' ?>"><i class="fa-solid fa-users"></i> Data Pelanggan</a>
+            <a href="admin_dashboard.php?page=businesses" class="side-link <?= $page === 'businesses' ? 'active' : '' ?>"><i class="fa-solid fa-briefcase"></i> Data Usaha Mitra</a>
+            <a href="admin_dashboard.php?page=consultations" class="side-link <?= $page === 'consultations' ? 'active' : '' ?>">
+                <i class="fa-solid fa-comments"></i> Konsultasi &amp; Chat
+                <?php if ($pendingConsultationCount > 0): ?>
+                    <span style="margin-left:auto;background:#e48e1e;color:#fff;font-size:10px;font-weight:800;padding:2px 7px;border-radius:99px"><?= $pendingConsultationCount ?> ACC</span>
+                <?php endif; ?>
+            </a>
             <a href="admin_dashboard.php?page=activity" class="side-link <?= $page === 'activity' ? 'active' : '' ?>"><i class="fa-solid fa-clock-rotate-left"></i> Aktivitas Terbaru</a>
             <a href="admin_dashboard.php?page=agency" class="side-link <?= $page === 'agency' ? 'active' : '' ?>"><i class="fa-solid fa-seedling"></i> Operasional Agency</a>
+            <a href="admin_dashboard.php?page=articles" class="side-link <?= $page === 'articles' ? 'active' : '' ?>"><i class="fa-solid fa-newspaper"></i> Kelola Artikel</a>
+            <a href="admin_dashboard.php?page=settings" class="side-link <?= $page === 'settings' ? 'active' : '' ?>"><i class="fa-solid fa-shield-halved"></i> Pengaturan &amp; Kebijakan</a>
         </nav>
 
         <div class="side-spacer"></div>
@@ -915,10 +2955,11 @@ if (count($nameParts) >= 2) {
                 </div>
                 <span class="welcome-tag"><span></span> Sistem terhubung ke database</span>
             </section>
-            <section class="stats-grid" aria-label="Ringkasan data">
+            <section class="stats-grid" aria-label="Ringkasan data" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));">
                 <article class="stat-card"><div class="stat-top"><span class="stat-kicker">Total Pelanggan</span><span class="stat-icon"><i class="fa-solid fa-users"></i></span></div><div class="stat-value"><?= number_format($customerCount, 0, ',', '.') ?></div><div class="stat-foot"><i class="fa-solid fa-database"></i> Akun tersimpan</div></article>
                 <article class="stat-card"><div class="stat-top"><span class="stat-kicker">Total Pesanan</span><span class="stat-icon amber"><i class="fa-solid fa-cart-shopping"></i></span></div><div class="stat-value"><?= number_format($orderCounts['all'], 0, ',', '.') ?></div><div class="stat-foot">Seluruh pesanan masuk</div></article>
                 <article class="stat-card"><div class="stat-top"><span class="stat-kicker">Pesanan Menunggu</span><span class="stat-icon sage"><i class="fa-regular fa-clock"></i></span></div><div class="stat-value"><?= number_format($orderCounts['pending'], 0, ',', '.') ?></div><div class="stat-foot">Perlu ditindaklanjuti</div></article>
+                <article class="stat-card"><div class="stat-top"><span class="stat-kicker">Artikel Edukasi</span><span class="stat-icon" style="background:#eff6ff;color:#2563eb"><i class="fa-solid fa-newspaper"></i></span></div><div class="stat-value"><?= (int)$artStats['published'] ?> <small style="font-size:13px;color:var(--muted);font-weight:600">/ <?= (int)$artStats['total'] ?></small></div><div class="stat-foot"><a href="admin_dashboard.php?page=articles" style="color:#2563eb;text-decoration:none">Kelola Artikel <i class="fa-solid fa-arrow-right"></i></a></div></article>
                 <article class="stat-card"><div class="stat-top"><span class="stat-kicker">Administrator</span><span class="stat-icon lilac"><i class="fa-solid fa-user-shield"></i></span></div><div class="stat-value"><?= number_format($adminCount, 0, ',', '.') ?></div><div class="stat-foot">Akun pengelola sistem</div></article>
             </section>
             <section class="panel-grid">
@@ -935,21 +2976,41 @@ if (count($nameParts) >= 2) {
             </section>
 
         <?php elseif ($page === 'orders'): ?>
-            <section class="welcome-row"><div><span class="eyebrow">BALLA’ FRESH · TRANSAKSI</span><h1>Pengelolaan Pesanan</h1><p>Kelola pesanan, informasi pelanggan, rincian layanan, dan progres pengerjaan.</p></div><span class="welcome-tag"><span></span> Data dari database pesanan</span></section>
+            <section class="welcome-row">
+                <div>
+                    <span class="eyebrow">BALLA’ FRESH · TRANSAKSI AGENCY</span>
+                    <h1>Pengelolaan Pesanan</h1>
+                    <p>Pantau transaksi masuk, rincian paket layanan digital, catatan khusus mitra, dan progres pengerjaan.</p>
+                </div>
+                <span class="welcome-tag"><span></span> <?= count($orders) ?> Pesanan Terpilih</span>
+            </section>
+
             <section class="panel" id="orders" style="margin-bottom:20px">
                 <div class="panel-head">
                     <div>
-                        <h2>Pengelolaan Pesanan</h2>
-                        <p>Pantau pesanan layanan dan perbarui progres pengerjaan pelanggan.</p>
+                        <h2>Daftar Pesanan Layanan</h2>
+                        <p>Kelola pesanan digital secara rapi berdasarkan kelompok tanggal dan filter status.</p>
                     </div>
-                    <span class="welcome-tag"><span></span> Data pesanan terbaru</span>
+                    <span class="welcome-tag"><span></span> Zona Waktu: Asia/Makassar (WITA)</span>
                 </div>
 
                 <div class="order-summary-grid">
-                    <div class="order-mini-stat"><span>Total Pesanan</span><strong><?= number_format($orderCounts['all'], 0, ',', '.') ?></strong></div>
-                    <div class="order-mini-stat"><span>Menunggu</span><strong><?= number_format($orderCounts['pending'], 0, ',', '.') ?></strong></div>
-                    <div class="order-mini-stat"><span>Diproses</span><strong><?= number_format($orderCounts['processing'], 0, ',', '.') ?></strong></div>
-                    <div class="order-mini-stat"><span>Selesai</span><strong><?= number_format($orderCounts['completed'], 0, ',', '.') ?></strong></div>
+                    <div class="order-mini-stat">
+                        <span>Total Pesanan <?= $periodFilter !== 'all' ? '(' . ucfirst(str_replace('_', ' ', $periodFilter)) . ')' : '' ?></span>
+                        <strong><?= number_format($orderCounts['all'], 0, ',', '.') ?></strong>
+                    </div>
+                    <div class="order-mini-stat">
+                        <span>Menunggu</span>
+                        <strong><?= number_format($orderCounts['pending'], 0, ',', '.') ?></strong>
+                    </div>
+                    <div class="order-mini-stat">
+                        <span>Diproses</span>
+                        <strong><?= number_format($orderCounts['processing'], 0, ',', '.') ?></strong>
+                    </div>
+                    <div class="order-mini-stat">
+                        <span>Selesai</span>
+                        <strong><?= number_format($orderCounts['completed'], 0, ',', '.') ?></strong>
+                    </div>
                 </div>
 
                 <?php if ($orderActionMessage !== ''): ?>
@@ -960,91 +3021,340 @@ if (count($nameParts) >= 2) {
                 <?php endif; ?>
 
                 <div class="panel-body">
-                    <div class="order-tools" style="justify-content:space-between;margin-bottom:14px">
-                        <span class="help" style="color:var(--muted);font-size:11px">Menampilkan maksimal 100 pesanan terbaru.</span>
-                        <select class="order-filter" id="orderStatusFilter" aria-label="Filter status pesanan">
-                            <option value="all">Semua status</option>
-                            <option value="pending">Menunggu</option>
-                            <option value="processing">Diproses</option>
-                            <option value="completed">Selesai</option>
-                            <option value="cancelled">Dibatalkan</option>
-                        </select>
-                    </div>
+                    <!-- FILTER TOOLBAR: STATUS & PERIODE BEKERJA BERSAMAAN -->
+                    <form method="get" action="admin_dashboard.php" class="order-filter-toolbar" id="orderFilterForm">
+                        <input type="hidden" name="page" value="orders">
+                        <div class="filter-controls">
+                            <div class="filter-group">
+                                <label for="orderStatusFilter"><i class="fa-solid fa-filter"></i> Status Pesanan</label>
+                                <select name="status" class="order-filter" id="orderStatusFilter" onchange="document.getElementById('orderFilterForm').submit()">
+                                    <option value="all" <?= $statusFilter === 'all' ? 'selected' : '' ?>>Semua Status</option>
+                                    <option value="pending" <?= $statusFilter === 'pending' ? 'selected' : '' ?>>Menunggu (Belum Selesai)</option>
+                                    <option value="processing" <?= $statusFilter === 'processing' ? 'selected' : '' ?>>Diproses (Sedang Dikerjakan)</option>
+                                    <option value="completed" <?= $statusFilter === 'completed' ? 'selected' : '' ?>>Selesai</option>
+                                    <option value="cancelled" <?= $statusFilter === 'cancelled' ? 'selected' : '' ?>>Dibatalkan</option>
+                                    <option value="paid" <?= $statusFilter === 'paid' ? 'selected' : '' ?>>Pembayaran Berhasil (Lunas)</option>
+                                    <option value="unpaid" <?= $statusFilter === 'unpaid' ? 'selected' : '' ?>>Menunggu Pembayaran</option>
+                                </select>
+                            </div>
 
+                            <div class="filter-group">
+                                <label for="orderPeriodFilter"><i class="fa-regular fa-calendar"></i> Periode Waktu (WITA)</label>
+                                <select name="period" class="order-filter" id="orderPeriodFilter" onchange="document.getElementById('orderFilterForm').submit()">
+                                    <option value="all" <?= $periodFilter === 'all' ? 'selected' : '' ?>>Semua Periode</option>
+                                    <option value="today" <?= $periodFilter === 'today' ? 'selected' : '' ?>>Hari Ini</option>
+                                    <option value="this_week" <?= $periodFilter === 'this_week' ? 'selected' : '' ?>>Minggu Ini</option>
+                                    <option value="this_month" <?= $periodFilter === 'this_month' ? 'selected' : '' ?>>Bulan Ini</option>
+                                    <option value="this_year" <?= $periodFilter === 'this_year' ? 'selected' : '' ?>>Tahun Ini</option>
+                                </select>
+                            </div>
+
+                            <?php if ($statusFilter !== 'all' || $periodFilter !== 'all'): ?>
+                                <a href="admin_dashboard.php?page=orders" class="btn-reset-filter" title="Kembalikan semua filter ke awal">
+                                    <i class="fa-solid fa-rotate-left"></i> Reset Filter
+                                </a>
+                            <?php endif; ?>
+                        </div>
+
+                        <!-- LIVE SEARCH BOX -->
+                        <div style="min-width:240px">
+                            <label style="font-size:10.5px;font-weight:800;color:#64748b;text-transform:uppercase;display:block;margin-bottom:3px">
+                                <i class="fa-solid fa-magnifying-glass"></i> Pencarian Cepat
+                            </label>
+                            <input type="search" id="quickSearchOrders" placeholder="Ketik nomor pesanan, nama, usaha..."
+                                   style="border:1px solid #cbd5e1;border-radius:8px;padding:7px 10px;font-size:12px;width:100%;background:#fff">
+                        </div>
+                    </form>
+
+                    <!-- TABEL 9 KOLOM DENGAN GROUPING TANGGAL -->
                     <div class="table-wrap">
-                        <table class="order-table">
+                        <table class="order-table" id="ordersMainTable">
                             <thead>
                                 <tr>
                                     <th>Nomor Pesanan</th>
-                                    <th>Pelanggan</th>
-                                    <th>Layanan</th>
-                                    <th>Total</th>
-                                    <th>Status</th>
-                                    <th>Ubah Status</th>
+                                    <th>Tanggal Masuk</th>
+                                    <th>Informasi Pelanggan &amp; Usaha</th>
+                                    <th>Layanan yang Dipesan</th>
+                                    <th>Catatan Pelanggan</th>
+                                    <th>Total Tagihan</th>
+                                    <th>Metode &amp; Status Bayar</th>
+                                    <th>Progres Pengerjaan</th>
+                                    <th>Aksi &amp; Dokumen</th>
                                 </tr>
                             </thead>
                             <tbody id="ordersTableBody">
-                            <?php if (!$orders): ?>
-                                <tr><td colspan="6">
-                                    <div class="empty">
-                                        <i class="fa-solid fa-bag-shopping"></i>
-                                        Belum ada pesanan yang masuk.
-                                    </div>
-                                </td></tr>
-                            <?php else: ?>
-                                <?php foreach ($orders as $order): ?>
-                                    <?php
-                                        $status = (string) $order['status'];
-                                        $serviceList = $order['ordered_services'] ?? '';
-                                        $serviceNames = $serviceList !== '' ? explode('||', $serviceList) : [];
-                                        $createdLabel = !empty($order['created_at'])
-                                            ? date('d M Y, H:i', strtotime((string) $order['created_at']))
-                                            : '-';
-                                    ?>
-                                    <tr data-order-status="<?= e($status) ?>">
-                                        <td>
-                                            <span class="order-number"><?= e($order['order_number']) ?></span>
-                                            <span class="order-sub"><?= e($createdLabel) ?> · #<?= (int) $order['id'] ?></span>
-                                        </td>
-                                        <td>
-                                            <strong><?= e($order['customer_name']) ?></strong>
-                                            <span class="order-sub"><?= e($order['customer_email']) ?></span>
-                                            <span class="order-sub"><?= e($order['customer_phone']) ?></span>
-                                            <div class="order-detail"><?= e($order['customer_address']) ?></div>
-                                        </td>
-                                        <td class="order-services">
-                                            <?php if ($serviceNames): ?>
-                                                <?php foreach ($serviceNames as $serviceName): ?>
-                                                    <div><?= e($serviceName) ?></div>
-                                                <?php endforeach; ?>
-                                            <?php else: ?>
-                                                <span class="order-sub">Rincian layanan tidak tersedia</span>
-                                            <?php endif; ?>
-                                            <?php if (!empty($order['notes'])): ?>
-                                                <div class="order-detail"><strong>Catatan:</strong> <?= e($order['notes']) ?></div>
-                                            <?php endif; ?>
-                                        </td>
-                                        <td class="order-total">Rp<?= number_format((float) $order['total_amount'], 0, ',', '.') ?></td>
-                                        <td>
-                                            <span class="status-pill <?= e(orderStatusClass($status)) ?>">
-                                                <i class="fa-solid fa-circle"></i><?= e(orderStatusLabel($status)) ?>
+                            <?php if (empty($groupedOrders)): ?>
+                                <tr>
+                                    <td colspan="9" style="text-align:center;padding:48px 16px">
+                                        <div class="empty">
+                                            <i class="fa-solid fa-bag-shopping" style="font-size:36px;color:#cbd5e1;margin-bottom:12px;display:block"></i>
+                                            <strong>Tidak ada pesanan yang ditemukan.</strong><br>
+                                            <span style="font-size:12px;color:var(--muted)">
+                                                <?= ($statusFilter !== 'all' || $periodFilter !== 'all') ? 'Coba ubah atau reset filter status dan periode di atas.' : 'Belum ada pesanan yang tercatat di sistem.' ?>
                                             </span>
-                                        </td>
-                                        <td>
-                                            <form method="post" action="admin_dashboard.php?page=orders#orders" class="status-form">
-                                                <input type="hidden" name="action" value="update_order_status">
-                                                <input type="hidden" name="csrf" value="<?= e($_SESSION['order_status_csrf']) ?>">
-                                                <input type="hidden" name="order_id" value="<?= (int) $order['id'] ?>">
-                                                <select name="status" aria-label="Status baru untuk <?= e($order['order_number']) ?>">
-                                                    <option value="pending" <?= $status === 'pending' ? 'selected' : '' ?>>Menunggu</option>
-                                                    <option value="processing" <?= $status === 'processing' ? 'selected' : '' ?>>Diproses</option>
-                                                    <option value="completed" <?= $status === 'completed' ? 'selected' : '' ?>>Selesai</option>
-                                                    <option value="cancelled" <?= $status === 'cancelled' ? 'selected' : '' ?>>Dibatalkan</option>
-                                                </select>
-                                                <button type="submit">Simpan</button>
-                                            </form>
+                                        </div>
+                                    </td>
+                                </tr>
+                            <?php else: ?>
+                                <?php foreach ($groupedOrders as $dateGroup): ?>
+                                    <!-- HEADER KELOMPOK TANGGAL -->
+                                    <tr class="date-group-row" data-group-row="true">
+                                        <td colspan="9">
+                                            <div class="date-group-bar date-group-<?= e($dateGroup['type']) ?>">
+                                                <div class="date-group-left">
+                                                    <i class="fa-solid fa-calendar-day"></i>
+                                                    <span><?= e($dateGroup['title']) ?></span>
+                                                </div>
+                                                <span class="date-group-badge"><?= count($dateGroup['orders']) ?> Pesanan</span>
+                                            </div>
                                         </td>
                                     </tr>
+
+                                    <?php foreach ($dateGroup['orders'] as $order): ?>
+                                        <?php
+                                            $orderTs = strtotime((string)$order['created_at']);
+                                            $status = (string)$order['status'];
+
+                                            // Parse Layanan
+                                            $serviceItems = [];
+                                            if (!empty($order['ordered_services_detail'])) {
+                                                $rawItems = explode('||', (string)$order['ordered_services_detail']);
+                                                foreach ($rawItems as $rawIt) {
+                                                    $parts = explode('::', $rawIt);
+                                                    if (count($parts) >= 2) {
+                                                        $serviceItems[] = [
+                                                            'name' => $parts[0],
+                                                            'qty' => (int)($parts[1] ?? 1),
+                                                            'price' => (float)($parts[2] ?? 0),
+                                                            'subtotal' => (float)($parts[3] ?? 0)
+                                                        ];
+                                                    }
+                                                }
+                                            }
+                                            $totalServiceCount = count($serviceItems);
+                                            $visibleServiceItems = array_slice($serviceItems, 0, 2);
+                                            $hiddenCount = $totalServiceCount - count($visibleServiceItems);
+
+                                            // Parse Catatan Pelanggan Khusus
+                                            $rawNotes = trim((string)$order['notes']);
+                                            $cleanCustomerNote = '';
+                                            if (!empty($rawNotes)) {
+                                                if (preg_match('/Catatan Tambahan:\s*(.*)/is', $rawNotes, $mN)) {
+                                                    $c = trim($mN[1]);
+                                                    if ($c !== '' && $c !== '-') {
+                                                        $cleanCustomerNote = $c;
+                                                    }
+                                                }
+                                                if ($cleanCustomerNote === '') {
+                                                    $lines = explode("\n", $rawNotes);
+                                                    $customLines = [];
+                                                    foreach ($lines as $line) {
+                                                        $l = trim($line);
+                                                        if ($l === '') continue;
+                                                        if (preg_match('/^(Nama Usaha|Sosial Media|Website|Metode Pembayaran|Catatan Tambahan):/i', $l)) {
+                                                            continue;
+                                                        }
+                                                        $customLines[] = $l;
+                                                    }
+                                                    if (!empty($customLines)) {
+                                                        $cleanCustomerNote = implode(' ', $customLines);
+                                                    }
+                                                }
+                                            }
+                                            $hasNotes = ($cleanCustomerNote !== '');
+                                            $isNotesLong = mb_strlen($cleanCustomerNote) > 65;
+
+                                            // Payment Info
+                                            $payInfo = paymentStatusBadge((string)($order['payment_status'] ?? ''));
+                                            $payMethod = (string)($order['payment_method'] ?? 'midtrans');
+                                            $payType = (string)($order['payment_type'] ?? '');
+                                            $subMeta = function_exists('getPaymentSubMethodMeta') ? getPaymentSubMethodMeta($payType ?: $payMethod) : [];
+                                            $subLabel = $subMeta['label'] ?? strtoupper($payType ?: $payMethod);
+                                            $subIcon = $subMeta['icon'] ?? 'fa-credit-card';
+                                            $transId = (string)($order['midtrans_transaction_id'] ?? '');
+                                            $settleTime = !empty($order['settlement_time'])
+                                                ? date('d/m/Y H:i', strtotime((string)$order['settlement_time']))
+                                                : null;
+
+                                            // Payload JSON Lengkap untuk Modal
+                                            $orderPayload = [
+                                                'id' => (int)$order['id'],
+                                                'order_number' => $order['order_number'],
+                                                'customer_name' => $order['customer_name'],
+                                                'customer_email' => $order['customer_email'],
+                                                'customer_phone' => $order['customer_phone'],
+                                                'customer_address' => $order['customer_address'],
+                                                'business_name' => $order['business_name'] ?? '',
+                                                'social_media' => $order['social_media'] ?? '',
+                                                'website_url' => $order['website_url'] ?? '',
+                                                'total_amount' => (float)$order['total_amount'],
+                                                'total_amount_formatted' => 'Rp' . number_format((float)$order['total_amount'], 0, ',', '.'),
+                                                'status' => $status,
+                                                'status_label' => orderStatusLabel($status),
+                                                'status_class' => orderStatusClass($status),
+                                                'payment_status' => (string)($order['payment_status'] ?? ''),
+                                                'payment_label' => $payInfo['label'],
+                                                'payment_class' => $payInfo['class'],
+                                                'payment_method' => strtoupper($payMethod),
+                                                'payment_type' => strtoupper($payType ?: $payMethod),
+                                                'payment_sub_label' => $subLabel,
+                                                'payment_code' => (string)($order['payment_code'] ?? ''),
+                                                'biller_code' => (string)($order['biller_code'] ?? ''),
+                                                'qr_url' => (string)($order['qr_url'] ?? ''),
+                                                'midtrans_id' => $transId ?: '-',
+                                                'settlement_time' => $settleTime ?: '-',
+                                                'created_at' => date('d M Y, H:i', $orderTs) . ' WITA',
+                                                'notes' => $rawNotes,
+                                                'customer_note_clean' => $cleanCustomerNote,
+                                                'services' => $serviceItems,
+                                                'invoice_url' => 'invoice.php?order=' . urlencode($order['order_number']),
+                                                'csrf' => $_SESSION['order_status_csrf']
+                                            ];
+                                            $orderJson = htmlspecialchars(json_encode($orderPayload, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP), ENT_QUOTES, 'UTF-8');
+                                        ?>
+                                        <tr data-order-row="true" data-search="<?= strtolower(e($order['order_number'] . ' ' . $order['customer_name'] . ' ' . ($order['business_name'] ?? '') . ' ' . $order['customer_phone'] . ' ' . $order['customer_email'])) ?>">
+                                            <!-- 1. Nomor Pesanan -->
+                                            <td>
+                                                <span class="order-number-pill"><?= e($order['order_number']) ?></span>
+                                                <span class="order-id-sub">#<?= (int)$order['id'] ?></span>
+                                            </td>
+
+                                            <!-- 2. Tanggal Masuk (Asia/Makassar) -->
+                                            <td>
+                                                <strong class="order-time-text"><?= date('H:i', $orderTs) ?> WITA</strong>
+                                                <span class="order-date-text"><?= date('d M Y', $orderTs) ?></span>
+                                            </td>
+
+                                            <!-- 3. Informasi Pelanggan & Usaha -->
+                                            <td>
+                                                <strong class="cust-name"><?= e($order['customer_name']) ?></strong>
+                                                <?php if (!empty($order['business_name'])): ?>
+                                                    <div class="cust-biz-tag" title="Nama Usaha Hidroponik">
+                                                        <i class="fa-solid fa-leaf"></i> <?= e($order['business_name']) ?>
+                                                    </div>
+                                                <?php endif; ?>
+                                                <div>
+                                                    <a href="https://wa.me/<?= preg_replace('/[^0-9]/', '', (string)$order['customer_phone']) ?>" target="_blank" class="cust-wa-link" title="Hubungi WhatsApp">
+                                                        <i class="fa-brands fa-whatsapp"></i> <?= e($order['customer_phone']) ?>
+                                                    </a>
+                                                </div>
+                                                <span class="cust-email-sub" title="<?= e($order['customer_email']) ?>">
+                                                    <i class="fa-regular fa-envelope"></i> <?= e($order['customer_email']) ?>
+                                                </span>
+                                            </td>
+
+                                            <!-- 4. Layanan yang Dipesan -->
+                                            <td>
+                                                <div class="service-chip-list">
+                                                    <?php if (!empty($serviceItems)): ?>
+                                                        <?php foreach ($visibleServiceItems as $svc): ?>
+                                                            <div class="service-chip" title="<?= e($svc['name']) ?>">
+                                                                <span class="service-chip-name"><?= e($svc['name']) ?></span>
+                                                                <span class="service-chip-qty"><?= (int)$svc['qty'] ?>x</span>
+                                                            </div>
+                                                        <?php endforeach; ?>
+                                                        <?php if ($hiddenCount > 0): ?>
+                                                            <button type="button" class="btn-more-services" onclick="openOrderDetail(<?= $orderJson ?>)">
+                                                                +<?= $hiddenCount ?> paket lainnya
+                                                            </button>
+                                                        <?php endif; ?>
+                                                    <?php else: ?>
+                                                        <span class="note-empty-pill">Layanan Balla’ Fresh</span>
+                                                    <?php endif; ?>
+                                                </div>
+                                            </td>
+
+                                            <!-- 5. Catatan Pelanggan (Kolom Terpisah) -->
+                                            <td>
+                                                <?php if ($hasNotes): ?>
+                                                    <div class="note-card-box">
+                                                        <i class="fa-solid fa-quote-left" style="color:#d97706;font-size:9px;margin-right:2px"></i>
+                                                        <span><?= e($isNotesLong ? mb_substr($cleanCustomerNote, 0, 65) . '...' : $cleanCustomerNote) ?></span>
+                                                        <?php if ($isNotesLong): ?>
+                                                            <button type="button" class="btn-note-detail" onclick="openOrderDetail(<?= $orderJson ?>)">
+                                                                Lihat Detail
+                                                            </button>
+                                                        <?php endif; ?>
+                                                    </div>
+                                                <?php else: ?>
+                                                    <span class="note-empty-pill"><i class="fa-regular fa-circle"></i> Tanpa catatan</span>
+                                                <?php endif; ?>
+                                            </td>
+
+                                            <!-- 6. Total Tagihan -->
+                                            <td>
+                                                <strong class="order-total-price">Rp<?= number_format((float)$order['total_amount'], 0, ',', '.') ?></strong>
+                                                <span class="order-total-qty"><?= (int)$order['total_quantity'] ?> Item Layanan</span>
+                                            </td>
+
+                                            <!-- 7. Metode & Status Pembayaran -->
+                                            <td>
+                                                <div style="margin-bottom:4px">
+                                                    <span class="pay-badge <?= e($payInfo['class']) ?>">
+                                                        <i class="fa-solid <?= e($payInfo['icon']) ?>"></i> <?= e($payInfo['label']) ?>
+                                                    </span>
+                                                </div>
+                                                <div class="pay-channel-pill" title="Metode Pembayaran">
+                                                    <i class="fa-solid <?= e($subIcon) ?>"></i> <?= e($subLabel) ?>
+                                                </div>
+                                                <?php if (!empty($order['payment_code'])): ?>
+                                                    <div style="font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;color:#0f172a;margin-top:3px;background:#f1f5f9;padding:2px 6px;border-radius:6px;display:inline-block">
+                                                        <?= (!empty($order['biller_code']) ? e($order['biller_code']) . ' / ' : '') . e($order['payment_code']) ?>
+                                                    </div>
+                                                <?php elseif (!empty($order['qr_url'])): ?>
+                                                    <div style="font-size:11px;font-weight:700;color:#16a34a;margin-top:3px">
+                                                        <i class="fa-solid fa-qrcode"></i> QRIS Ready
+                                                    </div>
+                                                <?php endif; ?>
+                                                <?php if ($transId !== ''): ?>
+                                                    <div class="pay-midtrans-id" title="ID Transaksi Midtrans">
+                                                        ID: <?= e($transId) ?>
+                                                    </div>
+                                                <?php endif; ?>
+                                                <?php if ($settleTime): ?>
+                                                    <div class="pay-settle-date" title="Waktu Lunas">
+                                                        <i class="fa-solid fa-clock-rotate-left"></i> <?= e($settleTime) ?>
+                                                    </div>
+                                                <?php endif; ?>
+                                            </td>
+
+                                            <!-- 8. Progres Pengerjaan -->
+                                            <td>
+                                                <div style="margin-bottom:6px">
+                                                    <span class="status-pill <?= e(orderStatusClass($status)) ?>">
+                                                        <i class="fa-solid fa-circle"></i> <?= e(orderStatusLabel($status)) ?>
+                                                    </span>
+                                                </div>
+                                                <form method="post" action="admin_dashboard.php?page=orders<?= $periodFilter !== 'all' ? '&period=' . urlencode($periodFilter) : '' ?><?= $statusFilter !== 'all' ? '&status=' . urlencode($statusFilter) : '' ?>#orders" class="status-compact-form">
+                                                    <input type="hidden" name="action" value="update_order_status">
+                                                    <input type="hidden" name="csrf" value="<?= e($_SESSION['order_status_csrf']) ?>">
+                                                    <input type="hidden" name="order_id" value="<?= (int) $order['id'] ?>">
+                                                    <select name="status" aria-label="Ubah progres">
+                                                        <option value="pending" <?= $status === 'pending' ? 'selected' : '' ?>>Menunggu</option>
+                                                        <option value="processing" <?= $status === 'processing' ? 'selected' : '' ?>>Diproses</option>
+                                                        <option value="completed" <?= $status === 'completed' ? 'selected' : '' ?>>Selesai</option>
+                                                        <option value="cancelled" <?= $status === 'cancelled' ? 'selected' : '' ?>>Dibatalkan</option>
+                                                    </select>
+                                                    <button type="submit" title="Simpan perubahan progres">Ubah</button>
+                                                </form>
+                                            </td>
+
+                                            <!-- 9. Aksi & Dokumen -->
+                                            <td>
+                                                <div class="order-action-stack">
+                                                    <button type="button" class="btn-act-detail" onclick="openOrderDetail(<?= $orderJson ?>)">
+                                                        <i class="fa-solid fa-eye"></i> Detail
+                                                    </button>
+                                                    <button type="button" class="btn-act-receipt" onclick="viewReceipt(<?= $orderJson ?>)">
+                                                        <i class="fa-solid fa-receipt"></i> Bukti Bayar
+                                                    </button>
+                                                    <a href="invoice.php?order=<?= urlencode($order['order_number']) ?>" target="_blank" class="btn-act-invoice" title="Cetak / Download PDF Invoice">
+                                                        <i class="fa-solid fa-file-invoice"></i> Invoice
+                                                    </a>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    <?php endforeach; ?>
                                 <?php endforeach; ?>
                             <?php endif; ?>
                             </tbody>
@@ -1053,21 +3363,481 @@ if (count($nameParts) >= 2) {
                 </div>
             </section>
 
+            <!-- 1. MODAL DETAIL LENGKAP PESANAN -->
+            <div id="orderDetailModal" class="modal-overlay">
+                <div class="modal-dialog-box">
+                    <div class="modal-dialog-header">
+                        <div style="display:flex;align-items:center;gap:12px">
+                            <div style="width:40px;height:40px;border-radius:12px;background:#edf7e9;color:#3a6932;display:grid;place-items:center;font-size:18px">
+                                <i class="fa-solid fa-box-archive"></i>
+                            </div>
+                            <div>
+                                <h3 style="font-size:16px;font-weight:800;color:#0f172a;margin:0">Rincian Lengkap Pesanan</h3>
+                                <span id="dtOrderNumber" style="font-family:monospace;font-size:13px;color:#64748b;font-weight:700"></span>
+                            </div>
+                        </div>
+                        <button type="button" onclick="closeOrderDetailModal()" style="background:transparent;border:none;font-size:20px;color:#94a3b8;cursor:pointer;padding:4px 8px">
+                            <i class="fa-solid fa-xmark"></i>
+                        </button>
+                    </div>
+
+                    <div class="modal-dialog-body">
+                        <!-- GRID PROFIL & STATUS -->
+                        <div class="modal-info-grid">
+                            <!-- KARTU 1: PELANGGAN & USAHA -->
+                            <div class="modal-section-card">
+                                <div class="modal-section-title"><i class="fa-solid fa-user-check"></i> Pelanggan &amp; Usaha Mitra</div>
+                                <div style="display:grid;gap:8px">
+                                    <div class="modal-info-row">
+                                        <label>Nama Pelanggan:</label>
+                                        <strong id="dtCustomerName">-</strong>
+                                    </div>
+                                    <div class="modal-info-row">
+                                        <label>Nama Usaha Hidroponik:</label>
+                                        <span id="dtBusinessName" style="color:#166534;font-weight:800">-</span>
+                                    </div>
+                                    <div class="modal-info-row">
+                                        <label>WhatsApp / Telepon:</label>
+                                        <div style="display:flex;align-items:center;gap:8px">
+                                            <strong id="dtPhone">-</strong>
+                                            <a id="dtWaLink" href="#" target="_blank" style="background:#22c55e;color:#fff;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:700;text-decoration:none">
+                                                <i class="fa-brands fa-whatsapp"></i> Chat
+                                            </a>
+                                        </div>
+                                    </div>
+                                    <div class="modal-info-row">
+                                        <label>Alamat Email:</label>
+                                        <span id="dtEmail">-</span>
+                                    </div>
+                                    <div class="modal-info-row">
+                                        <label>Alamat Domisili / Kebun:</label>
+                                        <span id="dtAddress" style="color:#334155;font-size:11.5px;line-height:1.4">-</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- KARTU 2: TRANSAKSI & PEMBAYARAN -->
+                            <div class="modal-section-card">
+                                <div class="modal-section-title"><i class="fa-solid fa-credit-card"></i> Status Transaksi &amp; Gateway</div>
+                                <div style="display:grid;gap:8px">
+                                    <div class="modal-info-row">
+                                        <label>Status Pembayaran:</label>
+                                        <div><span id="dtPaymentBadge" class="pay-badge paid"></span></div>
+                                    </div>
+                                    <div class="modal-info-row">
+                                        <label>Metode &amp; Saluran:</label>
+                                        <strong id="dtPaymentMethod">-</strong>
+                                    </div>
+                                    <div class="modal-info-row" id="dtPayCodeRow" style="display:none">
+                                        <label>Kode / No. VA / QR:</label>
+                                        <div id="dtPayCodeVal" style="font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:#0f172a">-</div>
+                                    </div>
+                                    <div class="modal-info-row">
+                                        <label>ID Transaksi Midtrans:</label>
+                                        <span id="dtMidtransId" style="font-family:monospace;font-size:12px">-</span>
+                                    </div>
+                                    <div class="modal-info-row">
+                                        <label>Waktu Lunas (Settlement):</label>
+                                        <span id="dtSettlementTime">-</span>
+                                    </div>
+                                    <div class="modal-info-row">
+                                        <label>Waktu Pesanan Masuk:</label>
+                                        <span id="dtCreatedAt">-</span>
+                                    </div>
+                                    <div class="modal-info-row" style="margin-top:4px;padding-top:6px;border-top:1px dashed #e2e8f0">
+                                        <label>Total Tagihan:</label>
+                                        <strong id="dtTotalAmount" class="modal-total-highlight">Rp0</strong>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- KARTU 3: RINCIAN PAKET LAYANAN -->
+                        <div class="modal-section-card">
+                            <div class="modal-section-title"><i class="fa-solid fa-cubes"></i> Paket Layanan yang Dipesan</div>
+                            <table class="modal-services-table">
+                                <thead>
+                                    <tr>
+                                        <th style="width:30px">No</th>
+                                        <th>Nama Layanan Digital</th>
+                                        <th style="width:60px;text-align:center">Qty</th>
+                                        <th style="width:110px;text-align:right">Harga Satuan</th>
+                                        <th style="width:120px;text-align:right">Subtotal</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="dtServicesTableBody">
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <!-- KARTU 4: CATATAN & ARAHAN KHUSUS MITRA -->
+                        <div class="modal-section-card">
+                            <div class="modal-section-title"><i class="fa-solid fa-comment-dots"></i> Catatan &amp; Preferensi Pelanggan</div>
+                            <div id="dtNotesContent" style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:12px;font-size:12px;color:#334155;line-height:1.6;white-space:pre-line">
+                            </div>
+                        </div>
+
+                        <!-- KARTU 5: UPDATE PROGRES PENGERJAAN PROYEK -->
+                        <div class="modal-section-card" style="margin-bottom:0">
+                            <div class="modal-section-title"><i class="fa-solid fa-bars-progress"></i> Progres Pengerjaan Proyek</div>
+                            <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
+                                <div>
+                                    <span style="font-size:11px;color:#64748b;display:block">Status Saat Ini:</span>
+                                    <span id="dtStatusPill" class="status-pill pending"></span>
+                                </div>
+
+                                <form method="post" action="admin_dashboard.php?page=orders<?= $periodFilter !== 'all' ? '&period=' . urlencode($periodFilter) : '' ?><?= $statusFilter !== 'all' ? '&status=' . urlencode($statusFilter) : '' ?>#orders" style="display:flex;gap:6px;align-items:center">
+                                    <input type="hidden" name="action" value="update_order_status">
+                                    <input type="hidden" name="csrf" id="dtCsrfInput" value="">
+                                    <input type="hidden" name="order_id" id="dtOrderIdInput" value="">
+                                    <select name="status" id="dtSelectStatus" style="border:1px solid #cbd5e1;border-radius:8px;padding:7px 10px;font-size:12px;background:#fff;font-weight:700">
+                                        <option value="pending">Menunggu</option>
+                                        <option value="processing">Diproses</option>
+                                        <option value="completed">Selesai</option>
+                                        <option value="cancelled">Dibatalkan</option>
+                                    </select>
+                                    <button type="submit" style="background:var(--green-700);color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:12px;font-weight:800;cursor:pointer">
+                                        Perbarui Status
+                                    </button>
+                                </form>
+                            </div>
+                        </div>
+
+                        <!-- TOMBOL AKSI MODAL -->
+                        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:20px;flex-wrap:wrap">
+                            <button type="button" onclick="closeOrderDetailModal()" style="background:#f1f5f9;border:1px solid #cbd5e1;color:#475569;padding:9px 18px;border-radius:10px;font-weight:700;font-size:13px;cursor:pointer">
+                                Tutup
+                            </button>
+                            <div style="display:flex;gap:10px">
+                                <button type="button" id="dtBtnReceipt" onclick="" style="background:#f8fafc;border:1px solid #cbd5e1;color:#334155;padding:9px 16px;border-radius:10px;font-weight:700;font-size:13px;cursor:pointer;display:inline-flex;align-items:center;gap:6px">
+                                    <i class="fa-solid fa-receipt"></i> Bukti Bayar
+                                </button>
+                                <a id="dtBtnInvoice" href="#" target="_blank" style="background:#3a6932;color:#fff;padding:9px 18px;border-radius:10px;font-weight:800;font-size:13px;text-decoration:none;display:inline-flex;align-items:center;gap:6px">
+                                    <i class="fa-solid fa-print"></i> Cetak Invoice
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 2. MODAL DETAIL BUKTI PEMBAYARAN DIGITAL MIDTRANS -->
+            <div id="receiptModal" class="modal-overlay">
+                <div class="modal-dialog-box" style="max-width:540px">
+                    <div class="modal-dialog-header">
+                        <div style="display:flex;align-items:center;gap:10px">
+                            <div style="width:36px;height:36px;border-radius:10px;background:#edf7e9;color:#3a6932;display:grid;place-items:center;font-size:16px">
+                                <i class="fa-solid fa-file-invoice-dollar"></i>
+                            </div>
+                            <div>
+                                <h3 style="font-size:15px;font-weight:800;color:#0f172a;margin:0">Bukti Pembayaran Digital</h3>
+                                <span id="rcpOrderNumber" style="font-family:monospace;font-size:12px;color:#64748b">-</span>
+                            </div>
+                        </div>
+                        <button type="button" onclick="closeReceiptModal()" style="background:transparent;border:none;font-size:18px;color:#94a3b8;cursor:pointer;padding:4px 8px">
+                            <i class="fa-solid fa-xmark"></i>
+                        </button>
+                    </div>
+                    <div class="modal-dialog-body">
+                        <div style="display:flex;justify-content:space-between;align-items:center;padding-bottom:14px;border-bottom:1px dashed #e2e8f0;margin-bottom:14px">
+                            <span style="font-size:13px;color:#64748b">Status Pembayaran</span>
+                            <span id="rcpStatusBadge" class="pay-badge paid"><i class="fa-solid fa-circle-check"></i> Lunas</span>
+                        </div>
+                        <div style="display:grid;gap:10px;font-size:13px">
+                            <div style="display:flex;justify-content:space-between">
+                                <span style="color:#64748b">Pelanggan:</span>
+                                <strong id="rcpCustomer" style="color:#0f172a;text-align:right">-</strong>
+                            </div>
+                            <div style="display:flex;justify-content:space-between">
+                                <span style="color:#64748b">Usaha / Brand:</span>
+                                <strong id="rcpBusiness" style="color:#0f172a;text-align:right">-</strong>
+                            </div>
+                            <div style="display:flex;justify-content:space-between">
+                                <span style="color:#64748b">Total Pembayaran:</span>
+                                <strong id="rcpTotal" style="color:#166534;font-size:15px;font-weight:800;text-align:right">-</strong>
+                            </div>
+                            <div style="display:flex;justify-content:space-between">
+                                <span style="color:#64748b">Metode &amp; Saluran:</span>
+                                <span id="rcpMethod" style="font-weight:700;color:#0f172a;text-align:right">-</span>
+                            </div>
+                            <div style="display:flex;justify-content:space-between" id="rcpPayCodeRow">
+                                <span style="color:#64748b">Kode Bayar / VA:</span>
+                                <span id="rcpPayCode" style="font-family:monospace;font-weight:700;color:#0f172a;text-align:right">-</span>
+                            </div>
+                            <div style="display:flex;justify-content:space-between">
+                                <span style="color:#64748b">ID Transaksi Midtrans:</span>
+                                <span id="rcpMidtransId" style="font-family:monospace;font-size:12px;color:#0f172a;text-align:right">-</span>
+                            </div>
+                            <div style="display:flex;justify-content:space-between">
+                                <span style="color:#64748b">Waktu Pelunasan:</span>
+                                <span id="rcpSettleTime" style="color:#0f172a;text-align:right">-</span>
+                            </div>
+                            <div style="display:flex;justify-content:space-between">
+                                <span style="color:#64748b">Waktu Masuk:</span>
+                                <span id="rcpCreatedAt" style="color:#0f172a;text-align:right">-</span>
+                            </div>
+                        </div>
+                        <div style="margin-top:20px;display:flex;gap:10px;justify-content:flex-end">
+                            <button type="button" onclick="closeReceiptModal()" style="background:#f1f5f9;border:1px solid #cbd5e1;color:#475569;padding:9px 16px;border-radius:10px;font-weight:700;font-size:12.5px;cursor:pointer">
+                                Tutup
+                            </button>
+                            <a id="rcpInvoiceLink" href="#" target="_blank" style="background:#3a6932;color:#fff;padding:9px 16px;border-radius:10px;font-weight:700;font-size:12.5px;text-decoration:none;display:inline-flex;align-items:center;gap:6px">
+                                <i class="fa-solid fa-print"></i> Cetak Invoice
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <script>
+            // Buka Modal Detail Pesanan
+            function openOrderDetail(order) {
+                document.getElementById('dtOrderNumber').textContent = order.order_number;
+                document.getElementById('dtCustomerName').textContent = order.customer_name;
+                document.getElementById('dtBusinessName').textContent = order.business_name || 'Tidak ada profil usaha';
+                document.getElementById('dtPhone').textContent = order.customer_phone;
+                const cleanPhone = (order.customer_phone || '').replace(/[^0-9]/g, '');
+                document.getElementById('dtWaLink').href = 'https://wa.me/' + cleanPhone;
+                document.getElementById('dtEmail').textContent = order.customer_email;
+                document.getElementById('dtAddress').textContent = order.customer_address || 'Alamat belum diatur';
+
+                // Status Pembayaran
+                const payBadge = document.getElementById('dtPaymentBadge');
+                payBadge.className = 'pay-badge ' + order.payment_class;
+                payBadge.innerHTML = '<i class="fa-solid ' + (order.payment_class === 'paid' ? 'fa-circle-check' : 'fa-clock') + '"></i> ' + order.payment_label;
+
+                document.getElementById('dtPaymentMethod').textContent = order.payment_sub_label || (order.payment_type || order.payment_method);
+                const payCodeRow = document.getElementById('dtPayCodeRow');
+                const payCodeVal = document.getElementById('dtPayCodeVal');
+                if (payCodeRow && payCodeVal) {
+                    if (order.payment_code) {
+                        payCodeRow.style.display = 'flex';
+                        payCodeVal.textContent = (order.biller_code ? ('Biller: ' + order.biller_code + ' | Bill Key: ') : 'No. VA: ') + order.payment_code;
+                    } else if (order.qr_url) {
+                        payCodeRow.style.display = 'flex';
+                        payCodeVal.innerHTML = '<a href="' + order.qr_url + '" target="_blank" style="color:#16a34a;font-weight:700;text-decoration:underline"><i class="fa-solid fa-qrcode"></i> Lihat Gambar QRIS</a>';
+                    } else {
+                        payCodeRow.style.display = 'none';
+                    }
+                }
+                document.getElementById('dtMidtransId').textContent = order.midtrans_id;
+                document.getElementById('dtSettlementTime').textContent = order.settlement_time;
+                document.getElementById('dtCreatedAt').textContent = order.created_at;
+                document.getElementById('dtTotalAmount').textContent = order.total_amount_formatted;
+
+                // Status Pengerjaan
+                const statusPill = document.getElementById('dtStatusPill');
+                statusPill.className = 'status-pill ' + order.status_class;
+                statusPill.innerHTML = '<i class="fa-solid fa-circle"></i> ' + order.status_label;
+
+                document.getElementById('dtOrderIdInput').value = order.id;
+                document.getElementById('dtCsrfInput').value = order.csrf;
+                document.getElementById('dtSelectStatus').value = order.status;
+
+                // Layanan Table
+                const tbody = document.getElementById('dtServicesTableBody');
+                tbody.innerHTML = '';
+                if (order.services && order.services.length > 0) {
+                    order.services.forEach(function(s, idx) {
+                        const tr = document.createElement('tr');
+                        tr.innerHTML = `
+                            <td>${idx + 1}</td>
+                            <td><strong>${s.name}</strong></td>
+                            <td style="text-align:center">${s.qty}x</td>
+                            <td style="text-align:right">Rp${Number(s.price).toLocaleString('id-ID')}</td>
+                            <td style="text-align:right"><strong>Rp${Number(s.subtotal).toLocaleString('id-ID')}</strong></td>
+                        `;
+                        tbody.appendChild(tr);
+                    });
+                } else {
+                    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:12px;color:#94a3b8">Rincian layanan tidak tersedia</td></tr>';
+                }
+
+                // Catatan
+                const notesBox = document.getElementById('dtNotesContent');
+                notesBox.textContent = order.notes || 'Pelanggan tidak menyertakan catatan khusus.';
+
+                // Action buttons
+                document.getElementById('dtBtnInvoice').href = order.invoice_url;
+                document.getElementById('dtBtnReceipt').onclick = function() {
+                    viewReceipt(order);
+                };
+
+                document.getElementById('orderDetailModal').style.display = 'flex';
+            }
+
+            function closeOrderDetailModal() {
+                const modal = document.getElementById('orderDetailModal');
+                if (modal) modal.style.display = 'none';
+            }
+
+            // Buka Modal Bukti Bayar
+            function viewReceipt(data) {
+                document.getElementById('rcpOrderNumber').textContent = data.order_number;
+                document.getElementById('rcpCustomer').textContent = data.customer_name;
+                document.getElementById('rcpBusiness').textContent = data.business_name || '-';
+                document.getElementById('rcpTotal').textContent = data.total_amount_formatted || ('Rp' + Number(data.total_amount).toLocaleString('id-ID'));
+                document.getElementById('rcpMethod').textContent = data.payment_sub_label || (data.payment_type || data.payment_method);
+                const rcpPayCodeRow = document.getElementById('rcpPayCodeRow');
+                const rcpPayCode = document.getElementById('rcpPayCode');
+                if (rcpPayCodeRow && rcpPayCode) {
+                    if (data.payment_code) {
+                        rcpPayCodeRow.style.display = 'flex';
+                        rcpPayCode.textContent = (data.biller_code ? (data.biller_code + ' / ') : '') + data.payment_code;
+                    } else if (data.qr_url) {
+                        rcpPayCodeRow.style.display = 'flex';
+                        rcpPayCode.innerHTML = '<a href="' + data.qr_url + '" target="_blank" style="color:#16a34a;text-decoration:underline">QRIS Ready</a>';
+                    } else {
+                        rcpPayCodeRow.style.display = 'none';
+                    }
+                }
+                document.getElementById('rcpMidtransId').textContent = data.midtrans_id;
+                document.getElementById('rcpSettleTime').textContent = data.settlement_time;
+                document.getElementById('rcpCreatedAt').textContent = data.created_at;
+                document.getElementById('rcpInvoiceLink').href = data.invoice_url;
+
+                const badge = document.getElementById('rcpStatusBadge');
+                badge.className = 'pay-badge ' + data.payment_class;
+                badge.innerHTML = '<i class="fa-solid ' + (data.payment_class === 'paid' ? 'fa-circle-check' : 'fa-clock') + '"></i> ' + data.payment_label;
+
+                document.getElementById('receiptModal').style.display = 'flex';
+            }
+
+            function closeReceiptModal() {
+                const modal = document.getElementById('receiptModal');
+                if (modal) modal.style.display = 'none';
+            }
+
+            // Tutup modal jika klik di luar card
+            window.addEventListener('click', function(e) {
+                const modalDetail = document.getElementById('orderDetailModal');
+                if (modalDetail && e.target === modalDetail) {
+                    modalDetail.style.display = 'none';
+                }
+                const modalReceipt = document.getElementById('receiptModal');
+                if (modalReceipt && e.target === modalReceipt) {
+                    modalReceipt.style.display = 'none';
+                }
+            });
+
+            // Live quick search tabel pesanan
+            const searchInput = document.getElementById('quickSearchOrders');
+            if (searchInput) {
+                searchInput.addEventListener('input', function() {
+                    const q = this.value.toLowerCase().trim();
+                    const rows = document.querySelectorAll('#ordersMainTable tbody tr[data-order-row="true"]');
+                    const groupRows = document.querySelectorAll('#ordersMainTable tbody tr[data-group-row="true"]');
+
+                    if (q === '') {
+                        rows.forEach(r => r.style.display = '');
+                        groupRows.forEach(g => g.style.display = '');
+                        return;
+                    }
+
+                    rows.forEach(r => {
+                        const searchData = r.dataset.search || '';
+                        if (searchData.includes(q)) {
+                            r.style.display = '';
+                        } else {
+                            r.style.display = 'none';
+                        }
+                    });
+
+                    // Hide group header if all rows in that date group are hidden
+                    groupRows.forEach(g => {
+                        let next = g.nextElementSibling;
+                        let hasVisible = false;
+                        while (next && next.dataset.orderRow === 'true') {
+                            if (next.style.display !== 'none') {
+                                hasVisible = true;
+                                break;
+                            }
+                            next = next.nextElementSibling;
+                        }
+                        g.style.display = hasVisible ? '' : 'none';
+                    });
+                });
+            }
+            </script>
+
         <?php elseif ($page === 'customers'): ?>
-            <section class="welcome-row"><div><span class="eyebrow">BALLA’ FRESH · CUSTOMER DATABASE</span><h1>Data Pelanggan</h1><p>Informasi akun pelanggan yang terdaftar di website, termasuk kontak dan alamat yang tersedia.</p></div><a class="btn" href="admin_dashboard.php?page=customers&amp;export=customers&amp;q=<?= rawurlencode($search) ?>"><i class="fa-solid fa-file-arrow-down"></i> Unduh CSV / Excel</a></section>
-            <section class="stats-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))"><article class="stat-card"><div class="stat-kicker">Total akun pelanggan</div><div class="stat-value"><?= number_format($customerCount,0,',','.') ?></div><div class="stat-foot">Data dari tabel users</div></article><article class="stat-card"><div class="stat-kicker">Pelanggan dengan alamat</div><div class="stat-value"><?= number_format($addressCount,0,',','.') ?></div><div class="stat-foot">Data dari tabel user_addresses jika tersedia</div></article></section>
+            <section class="welcome-row"><div><span class="eyebrow">BALLA’ FRESH · CUSTOMER DATABASE</span><h1>Data Pelanggan &amp; Profil Mitra</h1><p>Informasi akun pelanggan yang terdaftar di website, termasuk foto profil, tanggal lahir, identitas usaha, kontak, dan alamat terintegrasi langsung dengan database.</p></div><a class="btn" href="admin_dashboard.php?page=customers&amp;export=customers&amp;q=<?= rawurlencode($search) ?>"><i class="fa-solid fa-file-arrow-down"></i> Unduh CSV / Excel</a></section>
+            <section class="stats-grid" style="grid-template-columns:repeat(3,minmax(0,1fr))">
+                <article class="stat-card"><div class="stat-kicker">Total Akun Pelanggan</div><div class="stat-value"><?= number_format($customerCount,0,',','.') ?></div><div class="stat-foot">Tersimpan di tabel users</div></article>
+                <article class="stat-card"><div class="stat-kicker">Mitra Terdaftar Usaha</div><div class="stat-value"><?= number_format(count(array_filter($customers, fn($c) => !empty($c['business_name']))),0,',','.') ?></div><div class="stat-foot">Memiliki data profil usaha</div></article>
+                <article class="stat-card"><div class="stat-kicker">Pelanggan dengan Alamat</div><div class="stat-value"><?= number_format($addressCount,0,',','.') ?></div><div class="stat-foot">Alamat tersimpan</div></article>
+            </section>
             <article class="panel">
-                <div class="panel-head"><div><h2>Database Pelanggan</h2><p>Menampilkan seluruh data yang tersedia di database.</p></div>
-                    <form class="search-form" method="get" action="admin_dashboard.php"><input type="hidden" name="page" value="customers"><label class="search-box"><i class="fa-solid fa-magnifying-glass"></i><input type="search" name="q" value="<?= e($search) ?>" placeholder="Cari nama, email, atau nomor HP..."></label><button class="btn" type="submit">Cari</button></form>
+                <div class="panel-head"><div><h2>Database Akun &amp; Mitra Terdaftar</h2><p>Data profil pengguna yang tersambung langsung dari form profil website.</p></div>
+                    <form class="search-form" method="get" action="admin_dashboard.php"><input type="hidden" name="page" value="customers"><label class="search-box"><i class="fa-solid fa-magnifying-glass"></i><input type="search" name="q" value="<?= e($search) ?>" placeholder="Cari nama, email, usaha, atau HP..."></label><button class="btn" type="submit">Cari</button></form>
                 </div>
                 <?php if ($searchError !== ''): ?><div class="notice"><?= e($searchError) ?></div><?php endif; ?>
-                <div class="table-wrap"><table style="min-width:900px"><thead><tr><th>Nama Lengkap</th><th>Email</th><th>Nomor HP</th><th>Alamat</th><th>Tanggal Daftar</th><th>ID</th></tr></thead><tbody>
-                <?php if (!$customers): ?><tr><td colspan="6"><div class="empty"><i class="fa-solid fa-user-group"></i><?= $search !== '' ? 'Tidak ada pelanggan yang cocok.' : 'Belum ada data pelanggan.' ?></div></td></tr>
-                <?php else: foreach ($customers as $customer):
-                    $customerAddress = trim(implode(', ', array_filter([$customer['address_details'] ?? '', $customer['street'] ?? '', $customer['address'] ?? '', $customer['rt_rw'] ?? '', $customer['subdistrict'] ?? ($customer['district'] ?? ''), $customer['city'] ?? '', $customer['province'] ?? '', $customer['postal_code'] ?? ''])));
-                ?><tr><td><div class="customer-cell"><span class="customer-avatar"><?= e(strtoupper(substr((string)$customer['name'],0,1))) ?></span><span><strong><?= e($customer['name']) ?></strong><small>Pelanggan terdaftar</small></span></div></td><td><?= e($customer['email']) ?></td><td><?= e($customer['phone'] ?? '') ?: 'Belum tersedia di database' ?></td><td class="muted-cell"><?= e($customerAddress) ?: 'Alamat belum tersedia' ?></td><td><?= !empty($customer['registered_at']) ? e(date('d M Y',strtotime((string)$customer['registered_at']))) : '—' ?></td><td>#<?= (int)$customer['id'] ?></td></tr><?php endforeach; endif; ?>
-                </tbody></table></div>
-                <div class="panel-body"><p style="margin:0;color:var(--muted);font-size:11px">Data ditampilkan langsung dari tabel users dan user_addresses. Unduhan mengikuti kata pencarian yang sedang aktif. File CSV berformat UTF-8 dan dapat dibuka di Excel atau diimpor ke Google Sheets.</p></div>
+                <div class="table-wrap"><table style="min-width:1100px">
+                    <thead>
+                        <tr>
+                            <th>Profil &amp; Nama Lengkap</th>
+                            <th>Tanggal Lahir</th>
+                            <th>Nama Usaha &amp; Bidang</th>
+                            <th>Posisi / Jabatan</th>
+                            <th>Kontak (HP &amp; Email)</th>
+                            <th>Alamat Domisili</th>
+                            <th>Tanggal Daftar</th>
+                            <th>ID</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    <?php if (!$customers): ?><tr><td colspan="8"><div class="empty"><i class="fa-solid fa-user-group"></i><?= $search !== '' ? 'Tidak ada pelanggan yang cocok.' : 'Belum ada data pelanggan.' ?></div></td></tr>
+                    <?php else: foreach ($customers as $customer):
+                        $customerAddress = trim(implode(', ', array_filter([$customer['address_details'] ?? '', $customer['street'] ?? '', $customer['address'] ?? '', $customer['user_direct_address'] ?? '', $customer['rt_rw'] ?? '', $customer['subdistrict'] ?? ($customer['district'] ?? ''), $customer['city'] ?? '', $customer['province'] ?? '', $customer['postal_code'] ?? ''])));
+                        $hasPhoto = !empty($customer['profile_image']) && (str_starts_with($customer['profile_image'], 'http') || file_exists(__DIR__ . '/' . $customer['profile_image']));
+                    ?><tr>
+                        <td>
+                            <div class="customer-cell" style="display:flex;align-items:center;gap:12px">
+                                <?php if ($hasPhoto): ?>
+                                    <img src="<?= e($customer['profile_image']) ?>" alt="Avatar" style="width:42px;height:42px;border-radius:50%;object-fit:cover;border:2px solid #5b8121;flex-shrink:0">
+                                <?php else: ?>
+                                    <span class="customer-avatar" style="width:42px;height:42px;border-radius:50%;background:#eaf2e2;color:#3b5816;display:inline-grid;place-items:center;font-weight:800;flex-shrink:0"><?= e(strtoupper(substr((string)$customer['name'],0,1))) ?></span>
+                                <?php endif; ?>
+                                <div>
+                                    <strong><?= e($customer['name']) ?></strong>
+                                    <small style="display:block;color:var(--muted)"><?= e($customer['email']) ?></small>
+                                </div>
+                            </div>
+                        </td>
+                        <td>
+                            <?php if (!empty($customer['birth_date'])): ?>
+                                <span style="font-weight:600;color:#1e293b"><i class="fa-regular fa-calendar" style="color:var(--muted);margin-right:4px"></i> <?= date('d M Y', strtotime((string)$customer['birth_date'])) ?></span>
+                            <?php else: ?>
+                                <span style="color:var(--muted);font-size:12px">Belum diisi</span>
+                            <?php endif; ?>
+                        </td>
+                        <td>
+                            <?php if (!empty($customer['business_name'])): ?>
+                                <strong style="color:#2f4f1e"><?= e($customer['business_name']) ?></strong>
+                                <small style="display:block;color:var(--muted)"><?= e($customer['business_type'] ?: 'Agribisnis / Hidroponik') ?></small>
+                            <?php else: ?>
+                                <span style="color:var(--muted);font-size:12px">Belum diisi</span>
+                            <?php endif; ?>
+                        </td>
+                        <td>
+                            <?php if (!empty($customer['business_role'])): ?>
+                                <span style="background:#edf4e5;color:#3b5816;padding:4px 10px;border-radius:99px;font-size:11px;font-weight:700"><?= e($customer['business_role']) ?></span>
+                            <?php else: ?>
+                                <span style="color:var(--muted);font-size:12px">-</span>
+                            <?php endif; ?>
+                        </td>
+                        <td>
+                            <div style="font-size:12px">
+                                <strong><i class="fa-solid fa-phone" style="color:#5b8121;font-size:11px;margin-right:4px"></i> <?= e($customer['phone'] ?? '') ?: 'HP belum ada' ?></strong>
+                                <div style="color:var(--muted);font-size:11px;margin-top:2px"><?= e($customer['email']) ?></div>
+                            </div>
+                        </td>
+                        <td class="muted-cell" style="max-width:220px;font-size:12px"><?= e($customerAddress) ?: 'Alamat belum diisi' ?></td>
+                        <td style="font-size:12px;white-space:nowrap"><?= !empty($customer['registered_at']) ? e(date('d M Y',strtotime((string)$customer['registered_at']))) : '—' ?></td>
+                        <td><span style="font-size:11px;font-weight:700;color:var(--muted)">#<?= (int)$customer['id'] ?></span></td>
+                    </tr><?php endforeach; endif; ?>
+                    </tbody></table></div>
+                <div class="panel-body"><p style="margin:0;color:var(--muted);font-size:11px">Seluruh data pengguna, foto profil avatar, tanggal lahir, dan identitas usaha diperbarui secara realtime dari formulir halaman profil mitra.</p></div>
             </article>
 
         <?php elseif ($page === 'activity'): ?>
@@ -1091,11 +3861,259 @@ if (count($nameParts) >= 2) {
                 <div class="order-notice <?= e($agencyMessageType) ?>"><?= e($agencyMessage) ?></div>
             <?php endif; ?>
 
-            <!-- DAFTAR LAYANAN PUBLIK -->
-            <article class="panel" style="margin-bottom:24px">
+            <!-- NAVIGASI CEPAT SECTION CMS -->
+            <div class="cms-nav-pills">
+                <a href="#cms-hero" class="cms-pill"><i class="fa-solid fa-image"></i> 1. Hero Banner</a>
+                <a href="#cms-about" class="cms-pill"><i class="fa-solid fa-leaf"></i> 2. Tentang Kami &amp; Isu UMKM</a>
+                <a href="#cms-articles" class="cms-pill"><i class="fa-solid fa-newspaper"></i> 3. Konten Artikel &amp; Edukasi</a>
+                <a href="#cms-services" class="cms-pill"><i class="fa-solid fa-boxes-stacked"></i> 4. Katalog Layanan</a>
+                <a href="#cms-reviews" class="cms-pill"><i class="fa-solid fa-star"></i> 5. Moderasi Ulasan</a>
+                <a href="#cms-contact" class="cms-pill"><i class="fa-solid fa-address-book"></i> 6. Kontak &amp; Alamat</a>
+                <a href="admin_dashboard.php?page=settings" class="cms-pill"><i class="fa-solid fa-shield-halved"></i> 7. Kebijakan Privasi</a>
+            </div>
+
+            <!-- 1. SECTION HERO BANNER -->
+            <article class="panel cms-section-card" id="cms-hero">
                 <div class="panel-head">
                     <div>
-                        <h2>Daftar Layanan Aktif di Website</h2>
+                        <h2>Section 1: Hero Banner Website</h2>
+                        <p>Atur teks pembuka, headline utama, tagline, dan gambar hero di landing page.</p>
+                    </div>
+                    <span class="admin-badge-member"><i class="fa-solid fa-eye"></i> Tampil di Landing Page</span>
+                </div>
+                <div class="panel-body">
+                    <form method="post" action="admin_dashboard.php?page=agency#cms-hero" enctype="multipart/form-data" style="display:grid;gap:16px">
+                        <input type="hidden" name="agency_action" value="save_hero_section">
+                        <input type="hidden" name="agency_csrf" value="<?= e($_SESSION['order_status_csrf']) ?>">
+
+                        <div class="ops-grid">
+                            <label style="display:grid;gap:6px;font-size:12px;font-weight:700">Tagline / Eyebrow Hero
+                                <input class="order-filter" type="text" name="hero_tag" value="<?= e($siteContent['hero_tag']) ?>" placeholder="Contoh: Digital Growth Partner" required>
+                            </label>
+
+                            <label style="display:grid;gap:6px;font-size:12px;font-weight:700">Judul Utama Hero
+                                <input class="order-filter" type="text" name="hero_title" value="<?= e($siteContent['hero_title']) ?>" placeholder="Contoh: Lebih banyak peluang, #DariRumahAja." required>
+                            </label>
+                        </div>
+
+                        <label style="display:grid;gap:6px;font-size:12px;font-weight:700">Deskripsi Hero
+                            <textarea class="order-filter" name="hero_description" rows="3" placeholder="Jelaskan proposisi nilai agensi untuk petani hidroponik..." required><?= e($siteContent['hero_description']) ?></textarea>
+                        </label>
+
+                        <div style="display:grid;gap:8px">
+                            <label style="font-size:12px;font-weight:700">Unggah Gambar Hero dari Komputer (JPG, PNG, WEBP - Maks. 4 MB)
+                                <input class="order-filter" type="file" name="hero_image_file" accept="image/jpeg,image/png,image/webp" style="margin-top:6px">
+                            </label>
+                            <?php if (!empty($siteContent['hero_image'])): ?>
+                                <div style="display:flex;align-items:center;gap:14px;background:#f8faf6;padding:12px;border-radius:12px;border:1px solid #dce9bd">
+                                    <img src="<?= e($siteContent['hero_image']) ?>" alt="Preview Hero" style="max-width:140px;max-height:80px;object-fit:cover;border-radius:8px">
+                                    <div style="font-size:12px;color:var(--muted)">
+                                        <strong style="color:#1d2a12">Gambar Aktif Saat Ini:</strong><br>
+                                        <span><?= e($siteContent['hero_image']) ?></span>
+                                    </div>
+                                </div>
+                            <?php endif; ?>
+                        </div>
+
+                        <div>
+                            <button class="btn" type="submit"><i class="fa-solid fa-floppy-disk"></i> Simpan Section Hero</button>
+                        </div>
+                    </form>
+                </div>
+            </article>
+
+            <!-- 2. SECTION TENTANG KAMI & ISU UMKM -->
+            <article class="panel cms-section-card" id="cms-about">
+                <div class="panel-head">
+                    <div>
+                        <h2>Section 2: Tentang Kami &amp; Isu Terdekat UMKM</h2>
+                        <p>Kelola narasi berkembangnya agensi, permasalahan nyata petani hidroponik rumahan, dan solusi Balla’ Fresh.</p>
+                    </div>
+                    <span class="admin-badge-member"><i class="fa-solid fa-leaf"></i> Tentang Agensi</span>
+                </div>
+                <div class="panel-body">
+                    <form method="post" action="admin_dashboard.php?page=agency#cms-about" enctype="multipart/form-data" style="display:grid;gap:16px">
+                        <input type="hidden" name="agency_action" value="save_about_section">
+                        <input type="hidden" name="agency_csrf" value="<?= e($_SESSION['order_status_csrf']) ?>">
+
+                        <div class="ops-grid">
+                            <label style="display:grid;gap:6px;font-size:12px;font-weight:700">Tagline / Eyebrow Tentang Kami
+                                <input class="order-filter" type="text" name="about_tag" value="<?= e($siteContent['about_tag']) ?>" placeholder="Contoh: Tentang Balla’ Fresh" required>
+                            </label>
+
+                            <label style="display:grid;gap:6px;font-size:12px;font-weight:700">Judul Utama Tentang Kami
+                                <input class="order-filter" type="text" name="about_title" value="<?= e($siteContent['about_title']) ?>" placeholder="Contoh: Mendorong Kemandirian Petani &amp; UMKM Hidroponik Rumahan" required>
+                            </label>
+                        </div>
+
+                        <label style="display:grid;gap:6px;font-size:12px;font-weight:700">Cerita Berkembangnya Agensi
+                            <textarea class="order-filter" name="about_story" rows="4" placeholder="Ceritakan latar belakang kepedulian agensi terhadap UMKM hidroponik..." required><?= e($siteContent['about_story']) ?></textarea>
+                        </label>
+
+                        <label style="display:grid;gap:6px;font-size:12px;font-weight:700">Permasalahan Terdekat UMKM Hidroponik (Kendala Nyata)
+                            <textarea class="order-filter" name="about_problem" rows="4" placeholder="Uraikan kendala terdekat yang dihadapi petani hidroponik..." required><?= e($siteContent['about_problem']) ?></textarea>
+                        </label>
+
+                        <label style="display:grid;gap:6px;font-size:12px;font-weight:700">Solusi Terarah Balla’ Fresh
+                            <textarea class="order-filter" name="about_solution" rows="3" placeholder="Jelaskan pendekatan solusi modular Balla’ Fresh..." required><?= e($siteContent['about_solution']) ?></textarea>
+                        </label>
+
+                        <div style="display:grid;gap:8px">
+                            <label style="font-size:12px;font-weight:700">Unggah Foto Dokumentasi/Tentang Kami dari Komputer (JPG, PNG, WEBP - Maks. 4 MB)
+                                <input class="order-filter" type="file" name="about_image_file" accept="image/jpeg,image/png,image/webp" style="margin-top:6px">
+                            </label>
+                            <?php if (!empty($siteContent['about_image'])): ?>
+                                <div style="display:flex;align-items:center;gap:14px;background:#f8faf6;padding:12px;border-radius:12px;border:1px solid #dce9bd">
+                                    <img src="<?= e($siteContent['about_image']) ?>" alt="Preview Tentang Kami" style="max-width:140px;max-height:80px;object-fit:cover;border-radius:8px">
+                                    <div style="font-size:12px;color:var(--muted)">
+                                        <strong style="color:#1d2a12">Gambar Aktif Saat Ini:</strong><br>
+                                        <span><?= e($siteContent['about_image']) ?></span>
+                                    </div>
+                                </div>
+                            <?php endif; ?>
+                        </div>
+
+                        <div>
+                            <button class="btn" type="submit"><i class="fa-solid fa-floppy-disk"></i> Simpan Section Tentang Kami</button>
+                        </div>
+                    </form>
+                </div>
+            </article>
+
+            <!-- 3. SECTION KONTEN ARTIKEL & EDUKASI -->
+            <article class="panel cms-section-card" id="cms-articles">
+                <div class="panel-head">
+                    <div>
+                        <h2>Section 3: Konten Artikel &amp; Edukasi Hidroponik</h2>
+                        <p>Kelola artikel wawasan bisnis, panduan budidaya, branding, dan edukasi hidroponik yang tayang pada katalog artikel publik.</p>
+                    </div>
+                    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                        <a href="artikel.php" target="_blank" class="btn btn-light" style="font-size:12px;padding:7px 12px">
+                            <i class="fa-solid fa-arrow-up-right-from-square"></i> Buka Katalog Publik
+                        </a>
+                        <a href="admin_dashboard.php?page=articles#articleForm" class="btn" style="font-size:12px;padding:7px 14px">
+                            <i class="fa-solid fa-plus"></i> Tulis Artikel Baru
+                        </a>
+                    </div>
+                </div>
+                <div class="panel-body">
+                    <!-- Ringkasan Statistik Konten -->
+                    <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(180px, 1fr));gap:12px;margin-bottom:18px">
+                        <div style="background:#f8faf6;border:1px solid #dce9bd;border-radius:12px;padding:12px 14px">
+                            <span style="font-size:11px;color:var(--muted);font-weight:700">TOTAL ARTIKEL</span>
+                            <strong style="display:block;font-size:22px;color:var(--ink);margin-top:4px"><?= (int)$artStats['total'] ?> Konten</strong>
+                            <span style="font-size:11px;color:var(--muted)">Seluruh arsip artikel</span>
+                        </div>
+                        <div style="background:#f8faf6;border:1px solid #dce9bd;border-radius:12px;padding:12px 14px">
+                            <span style="font-size:11px;color:var(--muted);font-weight:700">TAYANG PUBLIK</span>
+                            <strong style="display:block;font-size:22px;color:var(--green);margin-top:4px"><?= (int)$artStats['published'] ?> Tayang</strong>
+                            <span style="font-size:11px;color:var(--muted)">Aktif di web mitra</span>
+                        </div>
+                        <div style="background:#f8faf6;border:1px solid #dce9bd;border-radius:12px;padding:12px 14px">
+                            <span style="font-size:11px;color:var(--muted);font-weight:700">HERO / UNGGULAN</span>
+                            <strong style="display:block;font-size:22px;color:#d97706;margin-top:4px"><?= (int)$artStats['featured'] ?> Hero</strong>
+                            <span style="font-size:11px;color:var(--muted)">Banner utama artikel</span>
+                        </div>
+                        <div style="background:#f8faf6;border:1px solid #dce9bd;border-radius:12px;padding:12px 14px">
+                            <span style="font-size:11px;color:var(--muted);font-weight:700">TOTAL DIBACA MITRA</span>
+                            <strong style="display:block;font-size:22px;color:#2563eb;margin-top:4px"><?= number_format((int)$artStats['views']) ?>x Dibaca</strong>
+                            <span style="font-size:11px;color:var(--muted)">Total views artikel</span>
+                        </div>
+                    </div>
+
+                    <!-- Cuplikan Artikel Terbaru & Aksi Cepat -->
+                    <div style="border:1px solid var(--line);border-radius:12px;overflow:hidden">
+                        <div style="padding:10px 14px;background:#fcfdfa;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+                            <strong style="font-size:13px;color:#1e293b"><i class="fa-solid fa-list-check" style="color:var(--green);margin-right:6px"></i> 5 Artikel Terbaru di Sistem</strong>
+                            <a href="admin_dashboard.php?page=articles" style="font-size:12px;font-weight:700;color:var(--green);text-decoration:none">
+                                Kelola &amp; Tulis Artikel Lengkap (<?= count($allArticlesList) ?>) <i class="fa-solid fa-arrow-right"></i>
+                            </a>
+                        </div>
+                        <div class="table-wrap">
+                            <table style="min-width:680px;margin:0">
+                                <thead>
+                                    <tr>
+                                        <th style="width:60px">Sampul</th>
+                                        <th>Judul Artikel &amp; Kategori</th>
+                                        <th>Penulis</th>
+                                        <th style="text-align:center">Dibaca</th>
+                                        <th style="text-align:center">Status</th>
+                                        <th style="text-align:center">Aksi Cepat</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php if (empty($allArticlesList)): ?>
+                                        <tr><td colspan="6"><div class="empty">Belum ada artikel. Klik tombol "+ Tulis Artikel Baru" di atas.</div></td></tr>
+                                    <?php else: foreach (array_slice($allArticlesList, 0, 5) as $artQuick): 
+                                        $qImg = !empty($artQuick['image']) ? $artQuick['image'] : 'https://images.unsplash.com/photo-1540420773420-3366772f4999?auto=format&fit=crop&w=200&q=80';
+                                    ?>
+                                        <tr>
+                                            <td>
+                                                <img src="<?= e($qImg) ?>" alt="<?= e($artQuick['title']) ?>" style="width:48px;height:48px;border-radius:8px;object-fit:cover;border:1px solid var(--line)">
+                                            </td>
+                                            <td>
+                                                <strong style="font-size:12.5px;color:#0f172a;line-height:1.3;display:block"><?= e($artQuick['title']) ?></strong>
+                                                <div style="margin-top:3px;display:flex;align-items:center;gap:6px">
+                                                    <span class="badge-cat-pill"><?= e($artQuick['category']) ?></span>
+                                                    <?php if (!empty($artQuick['is_featured'])): ?>
+                                                        <span style="font-size:10px;font-weight:800;background:#fef3c7;color:#b45309;padding:2px 6px;border-radius:4px"><i class="fa-solid fa-star"></i> Hero</span>
+                                                    <?php endif; ?>
+                                                </div>
+                                            </td>
+                                            <td style="font-size:12px;color:var(--muted)">
+                                                <?= e($artQuick['author_name']) ?>
+                                            </td>
+                                            <td style="text-align:center;font-weight:700;font-size:12px;color:#2563eb">
+                                                <?= number_format((int)$artQuick['views_count']) ?>
+                                            </td>
+                                            <td style="text-align:center">
+                                                <?php if (!empty($artQuick['is_published'])): ?>
+                                                    <span class="status-pill status-completed"><i class="fa-solid fa-circle"></i> Publik</span>
+                                                <?php else: ?>
+                                                    <span class="status-pill status-cancelled"><i class="fa-solid fa-circle"></i> Draf</span>
+                                                <?php endif; ?>
+                                            </td>
+                                            <td style="text-align:center">
+                                                <div style="display:inline-flex;gap:6px">
+                                                    <a href="baca_artikel.php?slug=<?= urlencode($artQuick['slug']) ?>" target="_blank" class="btn btn-light" style="padding:4px 8px;font-size:11px" title="Lihat di Web">
+                                                        <i class="fa-solid fa-arrow-up-right-from-square"></i>
+                                                    </a>
+                                                    <a href="admin_dashboard.php?page=articles&amp;edit_article=<?= (int)$artQuick['id'] ?>#articleForm" class="btn btn-light" style="padding:4px 8px;font-size:11px" title="Edit di Editor">
+                                                        <i class="fa-solid fa-pen-to-square"></i>
+                                                    </a>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    <?php endforeach; endif; ?>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div style="margin-top:14px;display:flex;justify-content:flex-end">
+                        <a href="admin_dashboard.php?page=articles" class="btn" style="padding:9px 18px">
+                            <i class="fa-solid fa-gear"></i> Buka Editor &amp; Manajemen Artikel Lengkap
+                        </a>
+                    </div>
+
+                    <!-- Catatan penyesuaian section yang dihapus dari beranda -->
+                    <div style="margin-top:14px;background:#f8fafc;border:1px dashed #cbd5e1;border-radius:10px;padding:10px 14px;font-size:11.5px;color:#64748b;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+                        <span><i class="fa-solid fa-circle-info" style="color:var(--green)"></i> <strong>Penyesuaian Beranda:</strong> Section Struktur Organisasi dan Banner CTA telah dinonaktifkan dari tampilan beranda agar struktur website lebih clean dan modern.</span>
+                        <details style="display:inline-block">
+                            <summary style="cursor:pointer;font-weight:700;color:var(--green)">Lihat Arsip Tim</summary>
+                            <div style="margin-top:8px;padding-top:8px;border-top:1px solid #e2e8f0;font-size:11px">
+                                Terdaftar <?= count($teamMembersList) ?> profil tim agensi tersimpan di sistem internal.
+                            </div>
+                        </details>
+                    </div>
+                </div>
+            </article>
+
+            <!-- 4. SECTION DAFTAR LAYANAN PUBLIK -->
+            <article class="panel cms-section-card" id="cms-services" style="margin-bottom:24px">
+                <div class="panel-head">
+                    <div>
+                        <h2>Section 4: Katalog Layanan Aktif di Website</h2>
                         <p>Layanan yang tampil pada katalog dan halaman detail layanan publik.</p>
                     </div>
                 </div>
@@ -1152,7 +4170,7 @@ if (count($nameParts) >= 2) {
                                             <a class="btn btn-light" href="detail_layanan.php?id=<?= (int)$srv['id'] ?>" target="_blank" title="Lihat Halaman Publik">
                                                 <i class="fa-solid fa-arrow-up-right-from-square"></i> Web
                                             </a>
-                                            <form method="post" onsubmit="return confirm('Apakah Anda yakin ingin menghapus layanan ini dari database?')">
+                                            <form method="post" action="admin_dashboard.php?page=agency#cms-services" onsubmit="return confirm('Apakah Anda yakin ingin menghapus layanan ini dari database?')">
                                                 <input type="hidden" name="agency_action" value="delete_service">
                                                 <input type="hidden" name="agency_csrf" value="<?= e($_SESSION['order_status_csrf']) ?>">
                                                 <input type="hidden" name="service_id" value="<?= (int)$srv['id'] ?>">
@@ -1168,7 +4186,7 @@ if (count($nameParts) >= 2) {
                                             <summary style="cursor:pointer;font-weight:700;color:var(--green)">
                                                 <i class="fa-solid fa-pen-to-square"></i> Edit Data Layanan #<?= (int)$srv['id'] ?> (<?= e($srv['name']) ?>)
                                             </summary>
-                                            <form method="post" enctype="multipart/form-data" style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:10px">
+                                            <form method="post" action="admin_dashboard.php?page=agency#cms-services" enctype="multipart/form-data" style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:10px">
                                                 <input type="hidden" name="agency_action" value="save_service">
                                                 <input type="hidden" name="agency_csrf" value="<?= e($_SESSION['order_status_csrf']) ?>">
                                                 <input type="hidden" name="service_id" value="<?= (int)$srv['id'] ?>">
@@ -1236,7 +4254,7 @@ if (count($nameParts) >= 2) {
                     </div>
                 </div>
                 <div class="panel-body">
-                    <form method="post" enctype="multipart/form-data" style="display:grid;gap:14px">
+                    <form method="post" action="admin_dashboard.php?page=agency#cms-services" enctype="multipart/form-data" style="display:grid;gap:14px">
                         <input type="hidden" name="agency_action" value="save_service">
                         <input type="hidden" name="agency_csrf" value="<?= e($_SESSION['order_status_csrf']) ?>">
                         <input type="hidden" name="service_id" value="0">
@@ -1293,11 +4311,11 @@ if (count($nameParts) >= 2) {
                 </div>
             </article>
 
-            <!-- KELOLA ULASAN & RATING MITRA -->
-            <article class="panel" style="margin-bottom:24px">
+            <!-- 5. SECTION KELOLA ULASAN & RATING MITRA -->
+            <article class="panel cms-section-card" id="cms-reviews" style="margin-bottom:24px">
                 <div class="panel-head">
                     <div>
-                        <h2>Ulasan &amp; Rating Mitra Pelanggan</h2>
+                        <h2>Section 5: Moderasi Ulasan &amp; Rating Mitra Pelanggan</h2>
                         <p>Moderasi ulasan yang diberikan oleh mitra bisnis pada halaman detail layanan.</p>
                     </div>
                 </div>
@@ -1350,7 +4368,7 @@ if (count($nameParts) >= 2) {
                                     </td>
                                     <td>
                                         <div style="display:flex;gap:6px;align-items:center">
-                                            <form method="post">
+                                            <form method="post" action="admin_dashboard.php?page=agency#cms-reviews">
                                                 <input type="hidden" name="agency_action" value="toggle_review">
                                                 <input type="hidden" name="agency_csrf" value="<?= e($_SESSION['order_status_csrf']) ?>">
                                                 <input type="hidden" name="review_id" value="<?= (int)$rev['id'] ?>">
@@ -1358,7 +4376,7 @@ if (count($nameParts) >= 2) {
                                                     <?= (int)$rev['is_approved'] === 1 ? 'Sembunyikan' : 'Tampilkan' ?>
                                                 </button>
                                             </form>
-                                            <form method="post" onsubmit="return confirm('Hapus ulasan ini?')">
+                                            <form method="post" action="admin_dashboard.php?page=agency#cms-reviews" onsubmit="return confirm('Hapus ulasan ini?')">
                                                 <input type="hidden" name="agency_action" value="delete_review">
                                                 <input type="hidden" name="agency_csrf" value="<?= e($_SESSION['order_status_csrf']) ?>">
                                                 <input type="hidden" name="review_id" value="<?= (int)$rev['id'] ?>">
@@ -1373,48 +4391,945 @@ if (count($nameParts) >= 2) {
                 </div>
             </article>
 
-            <!-- KONTEN HERO & WEBSITE -->
-            <article class="panel">
+            <!-- 6. SECTION KONTAK & ALAMAT WEBSITE -->
+            <article class="panel cms-section-card" id="cms-contact" style="margin-bottom:24px">
                 <div class="panel-head">
                     <div>
-                        <h2>Konten Informasi Website</h2>
-                        <p>Ubah judul hero, deskripsi, dan kontak narahubung website.</p>
+                        <h2>Section 6: Informasi Kontak &amp; Alamat Website</h2>
+                        <p>Kelola email narahubung, nomor WhatsApp resmi, dan alamat operasional agensi yang tampil di footer website publik.</p>
                     </div>
+                    <span class="admin-badge-member"><i class="fa-solid fa-address-book"></i> Kontak Agensi</span>
                 </div>
                 <div class="panel-body">
-                    <form method="post" enctype="multipart/form-data" style="display:grid;gap:14px">
-                        <input type="hidden" name="agency_action" value="save_content">
+                    <form method="post" action="admin_dashboard.php?page=agency#cms-contact" style="display:grid;gap:16px">
+                        <input type="hidden" name="agency_action" value="save_contact_section">
                         <input type="hidden" name="agency_csrf" value="<?= e($_SESSION['order_status_csrf']) ?>">
 
-                        <label style="display:grid;gap:7px;font-size:12px;font-weight:700">Judul utama website
-                            <input class="order-filter" type="text" name="hero_title" value="<?= e($siteContent['hero_title']) ?>" required>
-                        </label>
-
-                        <label style="display:grid;gap:7px;font-size:12px;font-weight:700">Deskripsi utama
-                            <textarea class="order-filter" name="hero_description" rows="3"><?= e($siteContent['hero_description']) ?></textarea>
-                        </label>
-
                         <div class="ops-grid">
-                            <label style="display:grid;gap:7px;font-size:12px;font-weight:700">Email kontak
-                                <input class="order-filter" type="email" name="contact_email" value="<?= e($siteContent['contact_email']) ?>">
+                            <label style="display:grid;gap:6px;font-size:12px;font-weight:700">Email Narahubung
+                                <input class="order-filter" type="email" name="contact_email" value="<?= e($siteContent['contact_email']) ?>" placeholder="Contoh: ballafresh01@gmail.com" required>
                             </label>
-                            <label style="display:grid;gap:7px;font-size:12px;font-weight:700">Nomor kontak WhatsApp
-                                <input class="order-filter" type="text" name="contact_phone" value="<?= e($siteContent['contact_phone']) ?>">
+
+                            <label style="display:grid;gap:6px;font-size:12px;font-weight:700">Nomor WhatsApp Resmi
+                                <input class="order-filter" type="text" name="contact_phone" value="<?= e($siteContent['contact_phone']) ?>" placeholder="Contoh: 081213725107" required>
                             </label>
                         </div>
 
-                        <label style="display:grid;gap:7px;font-size:12px;font-weight:700">Gambar hero (JPG/PNG/WEBP, maks. 4 MB)
-                            <input class="order-filter" type="file" name="hero_image" accept="image/jpeg,image/png,image/webp">
+                        <label style="display:grid;gap:6px;font-size:12px;font-weight:700">Alamat Fisik / Lokasi Usaha
+                            <input class="order-filter" type="text" name="contact_address" value="<?= e($siteContent['contact_address']) ?>" placeholder="Contoh: Makassar, Sulawesi Selatan, Indonesia" required>
                         </label>
-                        <?php if (!empty($siteContent['hero_image'])): ?>
-                            <img src="<?= e($siteContent['hero_image']) ?>" alt="Gambar hero saat ini" style="max-width:220px;border-radius:12px">
-                        <?php endif; ?>
 
                         <div>
-                            <button class="btn" type="submit"><i class="fa-solid fa-floppy-disk"></i> Simpan Konten Website</button>
+                            <button class="btn" type="submit"><i class="fa-solid fa-floppy-disk"></i> Simpan Kontak &amp; Alamat</button>
                         </div>
                     </form>
                 </div>
+            </article>
+
+        <?php elseif ($page === 'businesses'): ?>
+            <section class="welcome-row">
+                <div>
+                    <span class="eyebrow">BALLA’ FRESH · MITRA BUSINESS DIRECTORY</span>
+                    <h1>Data Usaha &amp; Profil Bisnis Mitra</h1>
+                    <p>Informasi identitas usaha UMKM hidroponik, bidang usaha, kepemilikan, media sosial, dan tautan website yang terhubung otomatis dari profil mitra.</p>
+                </div>
+                <span class="welcome-tag"><span></span> Terintegrasi Form Profil Mitra</span>
+            </section>
+
+            <section class="stats-grid" style="grid-template-columns:repeat(3,minmax(0,1fr))">
+                <article class="stat-card">
+                    <div class="stat-kicker">Total Mitra Terdaftar</div>
+                    <div class="stat-value"><?= number_format(count($mitraBusinesses), 0, ',', '.') ?></div>
+                    <div class="stat-foot">Akun mitra di platform</div>
+                </article>
+                <article class="stat-card">
+                    <div class="stat-kicker">Profil Usaha Terisi</div>
+                    <div class="stat-value"><?= number_format(count(array_filter($mitraBusinesses, fn($b) => !empty($b['business_name']))), 0, ',', '.') ?></div>
+                    <div class="stat-foot">Memiliki data bisnis spesifik</div>
+                </article>
+                <article class="stat-card">
+                    <div class="stat-kicker">Memiliki Tautan Web / Medsos</div>
+                    <div class="stat-value"><?= number_format(count(array_filter($mitraBusinesses, fn($b) => !empty($b['social_media']) || !empty($b['website_url']))), 0, ',', '.') ?></div>
+                    <div class="stat-foot">Mitra dengan presensi digital</div>
+                </article>
+            </section>
+
+            <article class="panel">
+                <div class="panel-head">
+                    <div>
+                        <h2>Direktori Usaha Mitra Balla’ Fresh</h2>
+                        <p>Data operasional bisnis yang diinput langsung oleh pengguna pada tab Informasi Usaha di halaman profil.</p>
+                    </div>
+                </div>
+                <div class="table-wrap">
+                    <table style="min-width:1150px">
+                        <thead>
+                            <tr>
+                                <th>Nama Usaha &amp; Bidang</th>
+                                <th>Pemilik / Akun Mitra</th>
+                                <th>Posisi / Peran</th>
+                                <th>Kontak &amp; Presensi Digital</th>
+                                <th>Alamat Operasional</th>
+                                <th>Deskripsi Usaha</th>
+                                <th>Kebutuhan Layanan</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php if (!$mitraBusinesses): ?>
+                                <tr><td colspan="7"><div class="empty">Belum ada data usaha mitra yang terdaftar.</div></td></tr>
+                            <?php else: foreach ($mitraBusinesses as $biz):
+                                $hasAvatar = !empty($biz['profile_image']) && (str_starts_with($biz['profile_image'], 'http') || file_exists(__DIR__ . '/' . $biz['profile_image']));
+                            ?>
+                                <tr>
+                                    <td>
+                                        <?php if (!empty($biz['business_name'])): ?>
+                                            <strong style="font-size:14px;color:#2f4f1e;display:block"><?= e($biz['business_name']) ?></strong>
+                                            <span class="biz-badge"><?= e($biz['business_type'] ?: 'Hidroponik / Agribisnis') ?></span>
+                                        <?php else: ?>
+                                            <span style="color:var(--muted);font-style:italic">Belum mengisi nama usaha</span>
+                                        <?php endif; ?>
+                                    </td>
+                                    <td>
+                                        <div style="display:flex;align-items:center;gap:10px">
+                                            <?php if ($hasAvatar): ?>
+                                                <img src="<?= e($biz['profile_image']) ?>" alt="Avatar" style="width:36px;height:36px;border-radius:50%;object-fit:cover;border:2px solid #5b8121">
+                                            <?php else: ?>
+                                                <span class="customer-avatar" style="width:36px;height:36px;border-radius:50%;background:#eaf2e2;color:#3b5816;display:inline-grid;place-items:center;font-weight:800"><?= e(strtoupper(substr((string)$biz['name'],0,1))) ?></span>
+                                            <?php endif; ?>
+                                            <div>
+                                                <strong><?= e($biz['name']) ?></strong>
+                                                <small style="display:block;color:var(--muted);font-size:11px"><?= e($biz['email']) ?></small>
+                                            </div>
+                                        </div>
+                                    </td>
+                                    <td>
+                                        <span style="font-weight:700;color:#1e293b;font-size:12px"><?= e($biz['business_role'] ?: 'Pemilik Usaha') ?></span>
+                                    </td>
+                                    <td>
+                                        <div style="font-size:12px;display:grid;gap:4px">
+                                            <div><i class="fa-solid fa-phone" style="color:#5b8121;margin-right:4px"></i> <?= e($biz['phone'] ?: 'Tidak ada') ?></div>
+                                            <?php if (!empty($biz['social_media'])): ?>
+                                                <div><i class="fa-brands fa-instagram" style="color:#e1306c;margin-right:4px"></i> <a href="<?= e(str_starts_with($biz['social_media'], 'http') ? $biz['social_media'] : 'https://instagram.com/' . ltrim($biz['social_media'], '@')) ?>" target="_blank" rel="noopener" style="color:#5b8121;text-decoration:underline"><?= e($biz['social_media']) ?></a></div>
+                                            <?php endif; ?>
+                                            <?php if (!empty($biz['website_url'])): ?>
+                                                <div><i class="fa-solid fa-globe" style="color:#0284c7;margin-right:4px"></i> <a href="<?= e(str_starts_with($biz['website_url'], 'http') ? $biz['website_url'] : 'https://' . $biz['website_url']) ?>" target="_blank" rel="noopener" style="color:#5b8121;text-decoration:underline"><?= e($biz['website_url']) ?></a></div>
+                                            <?php endif; ?>
+                                        </div>
+                                    </td>
+                                    <td style="max-width:200px;font-size:12px;color:#475569">
+                                        <?= e($biz['business_address'] ?: ($biz['address'] ?: 'Alamat belum diatur')) ?>
+                                    </td>
+                                    <td style="max-width:220px;font-size:12px;color:#334155;line-height:1.45">
+                                        <?= e($biz['business_description'] ?: 'Belum ada penjelasan usaha.') ?>
+                                    </td>
+                                    <td style="max-width:180px">
+                                        <?php if (!empty($biz['service_preferences'])): ?>
+                                            <span style="font-size:11px;background:#fef3c7;color:#92400e;padding:4px 8px;border-radius:6px;font-weight:600;display:inline-block"><?= e($biz['service_preferences']) ?></span>
+                                        <?php else: ?>
+                                            <span style="color:var(--muted);font-size:11px">Semua Solusi</span>
+                                        <?php endif; ?>
+                                    </td>
+                                </tr>
+                            <?php endforeach; endif; ?>
+                        </tbody>
+                    </table>
+                </div>
+            </article>
+
+        <?php elseif ($page === 'consultations'): ?>
+            <section class="welcome-row">
+                <div>
+                    <span class="eyebrow">BALLA’ FRESH · CONSULTATION DESK &amp; ROOM CHAT</span>
+                    <h1>Konsultasi &amp; Room Chat Mitra</h1>
+                    <p>Kelola permohonan konsultasi dari pengguna, berikan persetujuan (ACC) untuk membuka sesi obrolan, dan balas chat langsung dengan mitra melalui ruang interaktif.</p>
+                </div>
+                <span class="welcome-tag"><span></span> Chat Realtime Terhubung</span>
+            </section>
+
+            <?php if ($consultationMessage !== ''): ?>
+                <div class="order-notice <?= e($consultationMessageType) ?>" style="margin-bottom:20px"><?= e($consultationMessage) ?></div>
+            <?php endif; ?>
+
+            <div class="admin-chat-grid">
+                <!-- SISI KIRI: DAFTAR TIKET KONSULTASI -->
+                <div class="consult-list-box">
+                    <div class="consult-list-head" style="display:flex;align-items:center;justify-content:space-between">
+                        <div>
+                            <strong style="font-size:14px;color:#1e293b">Daftar Tiket Konsultasi</strong>
+                            <div style="font-size:11px;color:var(--muted);margin-top:2px"><?= count($allConsultations) ?> total permohonan</div>
+                        </div>
+                        <?php if ($pendingConsultationCount > 0): ?>
+                            <span class="badge-acc-pending"><i class="fa-solid fa-bell"></i> <?= $pendingConsultationCount ?> Butuh ACC</span>
+                        <?php endif; ?>
+                    </div>
+                    <div class="consult-list-body">
+                        <?php if (!$allConsultations): ?>
+                            <div class="empty" style="padding:40px 10px"><i class="fa-solid fa-comments"></i>Belum ada permohonan konsultasi.</div>
+                        <?php else: foreach ($allConsultations as $cItem):
+                            $isSelected = ((int)$cItem['id'] === $activeChatId);
+                            $cStatus = (string) $cItem['status'];
+                        ?>
+                            <div class="consult-card-item <?= $isSelected ? 'active' : '' ?> <?= $cStatus === 'pending' ? 'status-pending-acc' : '' ?>">
+                                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+                                    <span style="font-size:11px;font-weight:700;color:var(--muted)">#TICKET-<?= (int)$cItem['id'] ?></span>
+                                    <?php if ($cStatus === 'pending'): ?>
+                                        <span class="badge-acc-pending"><i class="fa-solid fa-clock"></i> Menunggu ACC</span>
+                                    <?php elseif ($cStatus === 'approved'): ?>
+                                        <span class="badge-acc-approved"><i class="fa-solid fa-circle-check"></i> Aktif (ACC)</span>
+                                    <?php else: ?>
+                                        <span class="badge-acc-completed"><i class="fa-solid fa-check"></i> Selesai</span>
+                                    <?php endif; ?>
+                                </div>
+
+                                <a href="admin_dashboard.php?page=consultations&amp;chat_id=<?= (int)$cItem['id'] ?>#chatdesk" style="text-decoration:none;color:inherit;display:block">
+                                    <strong style="font-size:13.5px;color:#1e293b;display:block"><?= e($cItem['client_name']) ?></strong>
+                                    <div style="font-size:11.5px;color:#5b8121;font-weight:600;margin-top:2px"><?= e($cItem['business_name'] ?: 'Mitra Hidroponik') ?></div>
+                                    <div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.4">
+                                        <?= e(mb_strimwidth((string)$cItem['notes'], 0, 85, '...')) ?>
+                                    </div>
+                                    <div style="font-size:10.5px;color:#94a3b8;margin-top:8px;display:flex;justify-content:space-between">
+                                        <span><i class="fa-regular fa-calendar"></i> <?= date('d M Y, H:i', strtotime((string)$cItem['created_at'])) ?></span>
+                                        <span><i class="fa-regular fa-message"></i> <?= (int)$cItem['msg_count'] ?> pesan</span>
+                                    </div>
+                                </a>
+
+                                <div style="margin-top:12px;padding-top:10px;border-top:1px dashed #e2e8f0;display:flex;align-items:center;justify-content:space-between;gap:8px">
+                                    <?php if ($cStatus === 'pending'): ?>
+                                        <form method="post" style="display:inline">
+                                            <input type="hidden" name="consultation_action" value="approve_consultation">
+                                            <input type="hidden" name="consultation_csrf" value="<?= e($_SESSION['order_status_csrf']) ?>">
+                                            <input type="hidden" name="consultation_id" value="<?= (int)$cItem['id'] ?>">
+                                            <button type="submit" class="btn" style="background:#e48e1e;padding:6px 14px;font-size:11.5px;border-radius:8px">
+                                                <i class="fa-solid fa-check"></i> ACC / Setujui
+                                            </button>
+                                        </form>
+                                    <?php endif; ?>
+                                    <a href="admin_dashboard.php?page=consultations&amp;chat_id=<?= (int)$cItem['id'] ?>#chatdesk" class="btn btn-light" style="padding:6px 12px;font-size:11.5px;margin-left:auto">
+                                        <?= $isSelected ? 'Sedang Dibuka' : 'Buka Chat' ?> <i class="fa-solid fa-arrow-right" style="font-size:10px"></i>
+                                    </a>
+                                </div>
+                            </div>
+                        <?php endforeach; endif; ?>
+                    </div>
+                </div>
+
+                <!-- SISI KANAN: LIVE ROOM CHAT -->
+                <div class="chat-room-desk" id="chatdesk">
+                    <?php if (!$activeConsultation): ?>
+                        <div class="empty" style="margin:auto;text-align:center">
+                            <i class="fa-solid fa-comments" style="font-size:40px;color:#cbd5e1;margin-bottom:12px"></i>
+                            <h3>Pilih Sesi Konsultasi</h3>
+                            <p style="color:var(--muted);font-size:13px;max-width:320px">Klik salah satu tiket konsultasi di kolom sebelah kiri untuk meninjau detail dan memulai percakapan.</p>
+                        </div>
+                    <?php else:
+                        $cStatus = (string) $activeConsultation['status'];
+                    ?>
+                        <!-- HEADER ROOM CHAT -->
+                        <div class="chat-room-head">
+                            <div style="display:flex;align-items:center;gap:12px">
+                                <span class="customer-avatar" style="width:42px;height:42px;border-radius:50%;background:#eaf2e2;color:#3b5816;display:inline-grid;place-items:center;font-weight:800;font-size:15px">
+                                    <?= e(strtoupper(substr((string)$activeConsultation['client_name'], 0, 1))) ?>
+                                </span>
+                                <div>
+                                    <div style="display:flex;align-items:center;gap:8px">
+                                        <strong style="font-size:15px;color:#1e293b"><?= e($activeConsultation['client_name']) ?></strong>
+                                        <?php if ($cStatus === 'pending'): ?>
+                                            <span class="badge-acc-pending"><i class="fa-solid fa-clock"></i> Menunggu ACC</span>
+                                        <?php elseif ($cStatus === 'approved'): ?>
+                                            <span class="badge-acc-approved"><i class="fa-solid fa-circle-check"></i> Aktif</span>
+                                        <?php else: ?>
+                                            <span class="badge-acc-completed"><i class="fa-solid fa-check"></i> Selesai</span>
+                                        <?php endif; ?>
+                                    </div>
+                                    <div style="font-size:12px;color:var(--muted);margin-top:2px">
+                                        <?= e($activeConsultation['business_name'] ?: 'Usaha Hidroponik') ?> · <i class="fa-solid fa-phone" style="font-size:10px"></i> <?= e($activeConsultation['phone']) ?> · <?= e($activeConsultation['category']) ?>
+                                    </div>
+                                </div>
+                            </div>
+                            <div>
+                                <?php if ($cStatus === 'approved'): ?>
+                                    <form method="post" style="display:inline" onsubmit="return confirm('Tandai sesi konsultasi ini sudah selesai?')">
+                                        <input type="hidden" name="consultation_action" value="complete_consultation">
+                                        <input type="hidden" name="consultation_csrf" value="<?= e($_SESSION['order_status_csrf']) ?>">
+                                        <input type="hidden" name="consultation_id" value="<?= (int)$activeConsultation['id'] ?>">
+                                        <button type="submit" class="btn btn-light" style="font-size:12px"><i class="fa-solid fa-check-double"></i> Selesaikan Sesi</button>
+                                    </form>
+                                <?php elseif ($cStatus === 'pending'): ?>
+                                    <form method="post" style="display:inline">
+                                        <input type="hidden" name="consultation_action" value="approve_consultation">
+                                        <input type="hidden" name="consultation_csrf" value="<?= e($_SESSION['order_status_csrf']) ?>">
+                                        <input type="hidden" name="consultation_id" value="<?= (int)$activeConsultation['id'] ?>">
+                                        <button type="submit" class="btn" style="background:#e48e1e;font-size:12px"><i class="fa-solid fa-check"></i> ACC / Setujui Konsultasi</button>
+                                    </form>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+
+                        <!-- SCROLL AREA PESAN -->
+                        <div class="chat-room-scroll" id="adminChatScroll">
+                            <!-- Catatan Awal Permohonan Mitra -->
+                            <div style="background:#ffffff;border:1px solid #e2e8f0;border-radius:12px;padding:14px 18px;margin-bottom:10px">
+                                <div style="font-size:11px;font-weight:700;color:#5b8121;text-transform:uppercase;letter-spacing:0.5px">Topik &amp; Kebutuhan Konsultasi Awal</div>
+                                <p style="margin:6px 0 0;font-size:13px;line-height:1.5;color:#334155"><?= nl2br(e($activeConsultation['notes'])) ?></p>
+                                <div style="font-size:10.5px;color:#94a3b8;margin-top:8px">Diajukan pada: <?= date('d M Y, H:i', strtotime((string)$activeConsultation['created_at'])) ?> WITA</div>
+                            </div>
+
+                            <?php if ($cStatus === 'pending'): ?>
+                                <div style="background:#fffbeb;border:1.5px dashed #fcd34d;border-radius:14px;padding:20px;text-align:center;margin:auto 0">
+                                    <i class="fa-solid fa-lock" style="font-size:32px;color:#d97706;margin-bottom:8px"></i>
+                                    <h3 style="margin:0 0 6px;color:#92400e;font-size:16px">Permohonan Menunggu ACC Admin</h3>
+                                    <p style="margin:0 0 16px;font-size:12.5px;color:#b45309">Mitra sedang menunggu persetujuan Anda sebelum ruang obrolan dapat dimulai. Klik tombol di bawah untuk menyetujui (ACC) konsultasi.</p>
+                                    <form method="post">
+                                        <input type="hidden" name="consultation_action" value="approve_consultation">
+                                        <input type="hidden" name="consultation_csrf" value="<?= e($_SESSION['order_status_csrf']) ?>">
+                                        <input type="hidden" name="consultation_id" value="<?= (int)$activeConsultation['id'] ?>">
+                                        <button type="submit" class="btn" style="background:#e48e1e;padding:10px 24px"><i class="fa-solid fa-check"></i> ACC / Setujui Konsultasi Sekarang</button>
+                                    </form>
+                                </div>
+                            <?php else: ?>
+                                <?php if (!$activeChatMessages): ?>
+                                    <div class="empty" style="margin:auto;text-align:center">
+                                        <i class="fa-regular fa-comment-dots" style="font-size:36px;color:#cbd5e1;margin-bottom:8px"></i>
+                                        <p style="color:var(--muted);font-size:13px">Belum ada obrolan tambahan. Kirimkan balasan pertama Anda untuk mitra.</p>
+                                    </div>
+                                <?php else: foreach ($activeChatMessages as $msg):
+                                    $isAdmin = ($msg['sender_type'] === 'admin');
+                                    $parsedChat = parseChatAttachments((string)$msg['message']);
+                                    $plainText = $parsedChat['text'];
+                                    $chatAtts = $parsedChat['attachments'];
+                                ?>
+                                    <div class="chat-room-msg <?= $isAdmin ? 'admin' : 'mitra' ?>">
+                                        <div style="font-size:11px;font-weight:700;color:<?= $isAdmin ? '#5b8121' : '#64748b' ?>;margin-bottom:4px">
+                                            <?= $isAdmin ? 'Admin Balla’ Fresh (' . e($msg['sender_name']) . ')' : e($msg['sender_name'] ?: $activeConsultation['client_name']) ?>
+                                        </div>
+                                        <div class="chat-bubble <?= $isAdmin ? 'admin-bubble' : 'mitra-bubble' ?>">
+                                            <?php if ($plainText !== ''): ?>
+                                                <div style="word-break:break-word"><?= autoLinkUrls(nl2br(e($plainText))) ?></div>
+                                            <?php endif; ?>
+
+                                            <?php if (!empty($chatAtts)): ?>
+                                                <div class="chat-attachments-list">
+                                                    <?php foreach ($chatAtts as $att):
+                                                        $ext = strtolower((string)$att['ext']);
+                                                        $isImage = in_array($ext, ['jpg', 'jpeg', 'png', 'webp', 'gif'], true);
+                                                        $isVideo = in_array($ext, ['mp4', 'webm', 'mov'], true);
+                                                    ?>
+                                                        <?php if ($isImage): ?>
+                                                            <div class="chat-att-card chat-att-image">
+                                                                <img src="<?= e($att['url']) ?>" alt="<?= e($att['name']) ?>" class="chat-thumb-img" onclick="openChatLightbox('<?= e($att['url']) ?>', '<?= e($att['name']) ?>')" title="Klik untuk memperbesar gambar">
+                                                                <div class="chat-att-meta">
+                                                                    <span class="chat-att-name" title="<?= e($att['name']) ?>">
+                                                                        <i class="fa-solid fa-image"></i> <?= e($att['name']) ?>
+                                                                    </span>
+                                                                    <?php if (!empty($att['size'])): ?>
+                                                                        <span class="chat-att-size"><?= e($att['size']) ?></span>
+                                                                    <?php endif; ?>
+                                                                    <a href="<?= e($att['url']) ?>" download="<?= e($att['name']) ?>" class="chat-att-dl" title="Unduh gambar"><i class="fa-solid fa-download"></i></a>
+                                                                </div>
+                                                            </div>
+                                                        <?php elseif ($isVideo): ?>
+                                                            <div class="chat-att-card">
+                                                                <video src="<?= e($att['url']) ?>" class="chat-player-video" controls preload="metadata"></video>
+                                                                <div class="chat-att-meta">
+                                                                    <span class="chat-att-name" title="<?= e($att['name']) ?>">
+                                                                        <i class="fa-solid fa-video"></i> <?= e($att['name']) ?>
+                                                                    </span>
+                                                                    <?php if (!empty($att['size'])): ?>
+                                                                        <span class="chat-att-size"><?= e($att['size']) ?></span>
+                                                                    <?php endif; ?>
+                                                                    <a href="<?= e($att['url']) ?>" download="<?= e($att['name']) ?>" class="chat-att-dl" title="Unduh video"><i class="fa-solid fa-download"></i></a>
+                                                                </div>
+                                                            </div>
+                                                        <?php else:
+                                                            $docClass = 'default';
+                                                            $docIcon = 'fa-file-lines';
+                                                            if ($ext === 'pdf') { $docClass = 'pdf'; $docIcon = 'fa-file-pdf'; }
+                                                            elseif (in_array($ext, ['doc', 'docx'], true)) { $docClass = 'word'; $docIcon = 'fa-file-word'; }
+                                                            elseif (in_array($ext, ['xls', 'xlsx', 'csv'], true)) { $docClass = 'excel'; $docIcon = 'fa-file-excel'; }
+                                                            elseif (in_array($ext, ['ppt', 'pptx'], true)) { $docClass = 'powerpoint'; $docIcon = 'fa-file-powerpoint'; }
+                                                            elseif ($ext === 'txt') { $docClass = 'text'; $docIcon = 'fa-file-lines'; }
+                                                        ?>
+                                                            <div class="chat-att-doc">
+                                                                <div class="chat-doc-icon <?= $docClass ?>">
+                                                                    <i class="fa-solid <?= $docIcon ?>"></i>
+                                                                </div>
+                                                                <div class="chat-doc-info">
+                                                                    <span class="chat-doc-title" title="<?= e($att['name']) ?>"><?= e($att['name']) ?></span>
+                                                                    <span class="chat-doc-sub"><?= strtoupper($ext) ?><?= !empty($att['size']) ? ' · ' . e($att['size']) : '' ?></span>
+                                                                </div>
+                                                                <div class="chat-doc-actions">
+                                                                    <a href="<?= e($att['url']) ?>" target="_blank" rel="noopener noreferrer" class="btn-chat-doc" title="Buka berkas di tab baru">
+                                                                        <i class="fa-solid fa-arrow-up-right-from-square"></i> Buka
+                                                                    </a>
+                                                                    <a href="<?= e($att['url']) ?>" download="<?= e($att['name']) ?>" class="btn-chat-doc" title="Unduh berkas">
+                                                                        <i class="fa-solid fa-download"></i>
+                                                                    </a>
+                                                                </div>
+                                                            </div>
+                                                        <?php endif; ?>
+                                                    <?php endforeach; ?>
+                                                </div>
+                                            <?php endif; ?>
+                                        </div>
+                                        <span class="chat-time-meta">
+                                            <?= date('d M, H:i', strtotime((string)$msg['created_at'])) ?>
+                                        </span>
+                                    </div>
+                                <?php endforeach; endif; ?>
+                            <?php endif; ?>
+                        </div>
+
+                        <!-- INPUT BALASAN ADMIN -->
+                        <div class="chat-room-footer">
+                            <?php if ($cStatus === 'pending'): ?>
+                                <div style="font-size:12px;color:var(--muted);text-align:center;padding:8px 0">
+                                    <i class="fa-solid fa-lock" style="margin-right:6px"></i> Silakan setujui (ACC) konsultasi terlebih dahulu untuk mulai membalas pesan.
+                                </div>
+                            <?php elseif ($cStatus === 'completed'): ?>
+                                <div style="font-size:12px;color:var(--muted);text-align:center;padding:8px 0">
+                                    <i class="fa-solid fa-circle-check" style="color:#15803d;margin-right:6px"></i> Sesi konsultasi ini telah selesai. Anda dapat meninjau riwayat pesan di atas.
+                                </div>
+                            <?php else: ?>
+                                <form id="adminChatForm" method="post" action="admin_dashboard.php?page=consultations&amp;chat_id=<?= (int)$activeConsultation['id'] ?>#chatdesk" enctype="multipart/form-data" style="display:grid;gap:8px">
+                                    <input type="hidden" name="consultation_action" value="send_admin_chat">
+                                    <input type="hidden" name="consultation_csrf" value="<?= e($_SESSION['order_status_csrf']) ?>">
+                                    <input type="hidden" name="consultation_id" value="<?= (int)$activeConsultation['id'] ?>">
+
+                                    <!-- Chip preview file terpilih -->
+                                    <div id="adminFilePreviewWrap" class="admin-file-preview-wrap" style="display:none"></div>
+
+                                    <div style="display:flex;gap:10px;align-items:flex-end">
+                                        <label for="adminChatFilesInput" class="btn" style="height:52px;width:52px;padding:0;display:inline-flex;align-items:center;justify-content:center;border-radius:10px;background:#f8fafc;color:#475569;border:1px solid #cbd5e1;cursor:pointer;flex-shrink:0" title="Lampirkan File (Gambar, Video, PDF, Dokumen - Maks. 5 file, 20MB/file)">
+                                            <i class="fa-solid fa-paperclip" style="font-size:18px"></i>
+                                        </label>
+                                        <input type="file" name="chat_files[]" id="adminChatFilesInput" multiple accept=".jpg,.jpeg,.png,.webp,.gif,.mp4,.webm,.mov,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv" style="display:none">
+                                        <textarea class="order-filter" name="chat_message" id="adminChatMessage" rows="2" placeholder="Ketik balasan untuk mitra <?= e($activeConsultation['client_name']) ?> di sini..." style="resize:none;flex:1"></textarea>
+                                        <button type="submit" class="btn" style="height:52px;padding:0 22px;display:inline-flex;align-items:center;gap:8px">
+                                            <i class="fa-solid fa-paper-plane"></i> Kirim
+                                        </button>
+                                    </div>
+                                </form>
+                            <?php endif; ?>
+                        </div>
+                    <?php endif; ?>
+                </div>
+            </div>
+
+        <?php elseif ($page === 'articles'): ?>
+            <section class="welcome-row">
+                <div>
+                    <span class="eyebrow">BALLA’ FRESH · CONTENT MANAGEMENT SYSTEM</span>
+                    <h1><?= $isArticleEditorOpen ? ($editArticleData ? 'Edit Konten Artikel' : 'Tulis Artikel Edukasi Baru') : 'Kelola Artikel &amp; Edukasi' ?></h1>
+                    <p><?= $isArticleEditorOpen ? 'Gunakan rich text editor profesional untuk memformat teks, ringkasan, dan wawasan edukasi hidroponik untuk mitra Balla’ Fresh.' : 'Kelola artikel panduan budidaya, branding, dan pemasaran hidroponik. Artikel yang dipublikasikan akan tampil di katalog artikel dan beranda mitra.' ?></p>
+                </div>
+                <div>
+                    <?php if ($isArticleEditorOpen): ?>
+                        <a href="admin_dashboard.php?page=articles" class="btn btn-light" style="padding:10px 18px;border-radius:10px">
+                            <i class="fa-solid fa-arrow-left"></i> Kembali ke Daftar Artikel
+                        </a>
+                    <?php else: ?>
+                        <a href="admin_dashboard.php?page=articles&amp;action=create#articleForm" class="btn" style="padding:10px 18px;border-radius:10px">
+                            <i class="fa-solid fa-plus"></i> Tulis Artikel Baru
+                        </a>
+                    <?php endif; ?>
+                </div>
+            </section>
+
+            <?php if ($articleMessage !== ''): ?>
+                <div class="order-notice <?= e($articleMessageType) ?>" style="margin-bottom:20px"><?= $articleMessage ?></div>
+            <?php endif; ?>
+
+            <!-- STATISTIK KONTEN ARTIKEL (DISEMBUNYIKAN SAAT EDITOR DIBUKA) -->
+            <?php if (!$isArticleEditorOpen): ?>
+                <section class="metrics-grid" style="grid-template-columns: repeat(4, 1fr); margin-bottom: 24px;">
+                    <article class="metric-card">
+                        <span class="metric-label"><i class="fa-solid fa-newspaper"></i> Total Artikel</span>
+                        <div class="metric-value"><?= (int)$artStats['total'] ?></div>
+                        <div class="metric-caption">Semua konten artikel di sistem</div>
+                    </article>
+                    <article class="metric-card">
+                        <span class="metric-label"><i class="fa-solid fa-circle-check"></i> Artikel Publik</span>
+                        <div class="metric-value" style="color:var(--green)"><?= (int)$artStats['published'] ?></div>
+                        <div class="metric-caption">Tayang aktif untuk mitra</div>
+                    </article>
+                    <article class="metric-card">
+                        <span class="metric-label"><i class="fa-solid fa-star"></i> Unggulan / Hero</span>
+                        <div class="metric-value" style="color:#d97706"><?= (int)$artStats['featured'] ?></div>
+                        <div class="metric-caption">Tampil pada banner utama</div>
+                    </article>
+                    <article class="metric-card">
+                        <span class="metric-label"><i class="fa-solid fa-eye"></i> Total Pembaca</span>
+                        <div class="metric-value" style="color:#2563eb"><?= number_format((int)$artStats['views']) ?></div>
+                        <div class="metric-caption">Total views seluruh artikel</div>
+                    </article>
+                </section>
+            <?php endif; ?>
+
+            <!-- FORMULIR ARTIKEL DENGAN RICH TEXT EDITOR & LAYOUT BERSIH TERSTRUKTUR -->
+            <?php if ($isArticleEditorOpen): ?>
+                <div id="articleForm" style="margin-bottom: 28px;">
+                    <form method="post" action="admin_dashboard.php?page=articles" enctype="multipart/form-data" id="articleMainForm">
+                        <input type="hidden" name="article_action" value="save_article">
+                        <input type="hidden" name="article_csrf" value="<?= e($_SESSION['order_status_csrf']) ?>">
+                        <input type="hidden" name="article_id" value="<?= $editArticleData ? (int)$editArticleData['id'] : 0 ?>">
+                        <input type="hidden" name="existing_image" value="<?= $editArticleData ? e($editArticleData['image']) : '' ?>">
+
+                        <div class="article-form-grid-layout">
+                            <!-- KOLOM KIRI (KONTEN UTAMA & INFORMASI INTI) -->
+                            <div style="display:flex;flex-direction:column;gap:18px">
+
+                                <!-- 1. INFORMASI ARTIKEL -->
+                                <div class="article-card-section">
+                                    <div class="article-section-header">
+                                        <div class="article-section-icon"><i class="fa-solid fa-file-lines"></i></div>
+                                        <div>
+                                            <h3 class="article-section-title">Informasi Artikel</h3>
+                                            <p class="article-section-subtitle">Tentukan judul artikel, slug tautan, kategori pembahasan, dan estimasi waktu baca.</p>
+                                        </div>
+                                    </div>
+                                    <div class="article-section-body">
+                                        <div>
+                                            <label class="form-field-label">Judul Artikel <span class="required-star">*</span></label>
+                                            <input class="order-filter article-input-title" type="text" name="title" id="articleTitleInput" value="<?= $editArticleData ? e($editArticleData['title']) : '' ?>" placeholder="Contoh: Strategi Efektif Menjaga Kualitas dan Kesegaran Sayur Hidroponik..." required>
+                                        </div>
+
+                                        <div style="display:grid;grid-template-columns: 1fr 1fr 140px;gap:14px;margin-top:14px">
+                                            <div>
+                                                <label class="form-field-label">Slug URL <small style="color:var(--muted);font-weight:normal">(otomatis dari judul)</small></label>
+                                                <input class="order-filter" type="text" name="slug" id="articleSlugInput" value="<?= $editArticleData ? e($editArticleData['slug']) : '' ?>" placeholder="strategi-efektif-sayur-hidroponik">
+                                            </div>
+                                            <div>
+                                                <label class="form-field-label">Kategori Artikel <span class="required-star">*</span></label>
+                                                <?php $curCat = $editArticleData['category'] ?? 'Branding & Kemasan'; ?>
+                                                <select class="order-filter" name="category" required>
+                                                    <option value="Branding & Kemasan" <?= ($curCat === 'Branding & Kemasan') ? 'selected' : '' ?>>Branding &amp; Kemasan</option>
+                                                    <option value="Budidaya & Teknis" <?= ($curCat === 'Budidaya & Teknis') ? 'selected' : '' ?>>Budidaya &amp; Teknis</option>
+                                                    <option value="Pemasaran & Penjualan" <?= ($curCat === 'Pemasaran & Penjualan') ? 'selected' : '' ?>>Pemasaran &amp; Penjualan</option>
+                                                    <option value="Manajemen Bisnis" <?= ($curCat === 'Manajemen Bisnis') ? 'selected' : '' ?>>Manajemen Bisnis</option>
+                                                </select>
+                                            </div>
+                                            <div>
+                                                <label class="form-field-label">Estimasi Baca</label>
+                                                <input class="order-filter" type="text" name="read_time" value="<?= $editArticleData ? e($editArticleData['read_time']) : '5 menit baca' ?>" placeholder="5 menit">
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 2. RINGKASAN ARTIKEL (EXCERPT) -->
+                                <div class="article-card-section">
+                                    <div class="article-section-header">
+                                        <div class="article-section-icon"><i class="fa-solid fa-align-left"></i></div>
+                                        <div>
+                                            <h3 class="article-section-title">Ringkasan Artikel (Excerpt)</h3>
+                                            <p class="article-section-subtitle">Ringkasan singkat 1-2 kalimat untuk preview di kartu katalog dan media sosial.</p>
+                                        </div>
+                                    </div>
+                                    <div class="article-section-body">
+                                        <textarea class="order-filter" name="excerpt" rows="2" style="resize:vertical" placeholder="Tulis ringkasan singkat artikel di sini..."><?= $editArticleData ? e($editArticleData['excerpt']) : '' ?></textarea>
+                                    </div>
+                                </div>
+
+                                <!-- 3. KONTEN UTAMA MENGGUNAKAN RICH TEXT EDITOR -->
+                                <div class="article-card-section">
+                                    <div class="article-section-header" style="justify-content:space-between">
+                                        <div style="display:flex;align-items:center;gap:12px">
+                                            <div class="article-section-icon"><i class="fa-solid fa-feather-pointed"></i></div>
+                                            <div>
+                                                <h3 class="article-section-title">Konten Utama Artikel <span class="required-star">*</span></h3>
+                                                <p class="article-section-subtitle">Format teks artikel menggunakan toolbar editor modern di bawah.</p>
+                                            </div>
+                                        </div>
+                                        <span style="font-size:11px;color:var(--muted);font-weight:700"><i class="fa-solid fa-pen-to-square"></i> Rich Text Active</span>
+                                    </div>
+                                    <div class="article-section-body" style="padding:0">
+                                        <div class="rte-editor-container">
+                                            <!-- TOOLBAR -->
+                                            <div class="rte-toolbar" id="articleEditorToolbar">
+                                                <!-- Tool Group 1: Undo / Redo -->
+                                                <div class="rte-tool-group">
+                                                    <button type="button" class="rte-btn" data-command="undo" title="Urungkan (Undo)"><i class="fa-solid fa-rotate-left"></i></button>
+                                                    <button type="button" class="rte-btn" data-command="redo" title="Ulangi (Redo)"><i class="fa-solid fa-rotate-right"></i></button>
+                                                </div>
+                                                <div class="rte-divider"></div>
+
+                                                <!-- Tool Group 2: Headings & Font Size -->
+                                                <div class="rte-tool-group">
+                                                    <select class="rte-select" id="rteHeadingSelect" title="Format Judul & Paragraf">
+                                                        <option value="p">Normal (Paragraf)</option>
+                                                        <option value="h1">Judul Utama (H1)</option>
+                                                        <option value="h2">Sub-Judul Besar (H2)</option>
+                                                        <option value="h3">Sub-Judul Sedang (H3)</option>
+                                                    </select>
+
+                                                    <select class="rte-select" id="rteFontSizeSelect" title="Pilih Ukuran Font">
+                                                        <option value="">Ukuran Font</option>
+                                                        <option value="12px">12 px (Kecil)</option>
+                                                        <option value="14px">14 px (Standar)</option>
+                                                        <option value="16px">16 px (Sedang)</option>
+                                                        <option value="18px">18 px (Agak Besar)</option>
+                                                        <option value="24px">24 px (Besar)</option>
+                                                        <option value="32px">32 px (Ekstra Besar)</option>
+                                                    </select>
+                                                </div>
+                                                <div class="rte-divider"></div>
+
+                                                <!-- Tool Group 3: Formatting (Bold, Italic, Underline, Strike) -->
+                                                <div class="rte-tool-group">
+                                                    <button type="button" class="rte-btn" data-command="bold" title="Tebal (Bold)"><i class="fa-solid fa-bold"></i></button>
+                                                    <button type="button" class="rte-btn" data-command="italic" title="Miring (Italic)"><i class="fa-solid fa-italic"></i></button>
+                                                    <button type="button" class="rte-btn" data-command="underline" title="Garis Bawah (Underline)"><i class="fa-solid fa-underline"></i></button>
+                                                    <button type="button" class="rte-btn" data-command="strikeThrough" title="Coret (Strikethrough)"><i class="fa-solid fa-strikethrough"></i></button>
+                                                </div>
+                                                <div class="rte-divider"></div>
+
+                                                <!-- Tool Group 4: Alignment -->
+                                                <div class="rte-tool-group">
+                                                    <button type="button" class="rte-btn" data-command="justifyLeft" title="Rata Kiri"><i class="fa-solid fa-align-left"></i></button>
+                                                    <button type="button" class="rte-btn" data-command="justifyCenter" title="Rata Tengah"><i class="fa-solid fa-align-center"></i></button>
+                                                    <button type="button" class="rte-btn" data-command="justifyRight" title="Rata Kanan"><i class="fa-solid fa-align-right"></i></button>
+                                                </div>
+                                                <div class="rte-divider"></div>
+
+                                                <!-- Tool Group 5: Lists -->
+                                                <div class="rte-tool-group">
+                                                    <button type="button" class="rte-btn" data-command="insertUnorderedList" title="Daftar Poin (Bullet List)"><i class="fa-solid fa-list-ul"></i></button>
+                                                    <button type="button" class="rte-btn" data-command="insertOrderedList" title="Daftar Bernomor (Numbered List)"><i class="fa-solid fa-list-ol"></i></button>
+                                                </div>
+                                                <div class="rte-divider"></div>
+
+                                                <!-- Tool Group 6: Links & Extras -->
+                                                <div class="rte-tool-group">
+                                                    <button type="button" class="rte-btn" id="rteBtnInsertLink" title="Sisipkan Tautan Web"><i class="fa-solid fa-link"></i></button>
+                                                    <button type="button" class="rte-btn" data-command="unlink" title="Hapus Tautan"><i class="fa-solid fa-link-slash"></i></button>
+                                                    <button type="button" class="rte-btn" data-command="removeFormat" title="Hapus Pemformatan"><i class="fa-solid fa-text-slash"></i></button>
+                                                </div>
+                                            </div>
+
+                                            <!-- EDITABLE CANVAS (WYSIWYG) -->
+                                            <div class="rte-canvas" id="articleEditorCanvas" contenteditable="true" spellcheck="false" data-placeholder="Tuliskan isi artikel edukasi lengkap di sini..."></div>
+
+                                            <!-- HIDDEN TEXTAREA UNTUK POST DATA FORM -->
+                                            <textarea name="content" id="articleContentInput" style="display:none" required><?= $editArticleData ? e($editArticleData['content']) : '' ?></textarea>
+
+                                            <!-- FOOTER EDITOR -->
+                                            <div class="rte-footer">
+                                                <span id="rteWordCount"><i class="fa-solid fa-pen-nib" style="margin-right:4px"></i> 0 kata</span>
+                                                <span style="opacity:0.4">|</span>
+                                                <span id="rteCharCount">0 karakter</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- KOLOM KANAN (SIDEBAR FORM: PUBLIKASI, GAMBAR, PENULIS) -->
+                            <div style="display:flex;flex-direction:column;gap:18px">
+
+                                <!-- 4. PENGATURAN PUBLIKASI & AKSI -->
+                                <div class="article-card-section">
+                                    <div class="article-section-header">
+                                        <div class="article-section-icon"><i class="fa-solid fa-sliders"></i></div>
+                                        <div>
+                                            <h3 class="article-section-title">Status Publikasi</h3>
+                                        </div>
+                                    </div>
+                                    <div class="article-section-body">
+                                        <div class="pub-toggle-card">
+                                            <label class="pub-toggle-label">
+                                                <input type="checkbox" name="is_published" value="1" <?= (!$editArticleData || !empty($editArticleData['is_published'])) ? 'checked' : '' ?> class="pub-checkbox green">
+                                                <div>
+                                                    <strong style="display:block;font-size:13px;color:#0f172a">Publikasikan Artikel</strong>
+                                                    <small style="display:block;font-size:11.5px;color:var(--muted)">Artikel aktif dan tampil di katalog publik website.</small>
+                                                </div>
+                                            </label>
+                                        </div>
+
+                                        <div class="pub-toggle-card" style="margin-top:10px">
+                                            <label class="pub-toggle-label">
+                                                <input type="checkbox" name="is_featured" value="1" <?= ($editArticleData && !empty($editArticleData['is_featured'])) ? 'checked' : '' ?> class="pub-checkbox orange">
+                                                <div>
+                                                    <strong style="display:block;font-size:13px;color:#0f172a">Artikel Unggulan (Hero)</strong>
+                                                    <small style="display:block;font-size:11.5px;color:var(--muted)">Ditampilkan pada banner utama halaman artikel.</small>
+                                                </div>
+                                            </label>
+                                        </div>
+
+                                        <div style="margin-top:18px;display:grid;gap:8px">
+                                            <button class="btn btn-primary" type="submit" style="width:100%;padding:12px;font-size:13px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;gap:8px;border-radius:10px">
+                                                <i class="fa-solid fa-floppy-disk"></i> <?= $editArticleData ? 'Simpan Perubahan' : 'Simpan &amp; Terbitkan' ?>
+                                            </button>
+                                            <a href="admin_dashboard.php?page=articles" class="btn btn-light" style="width:100%;padding:10px;font-size:12px;text-align:center;border-radius:10px">
+                                                Batal &amp; Kembali
+                                            </a>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 5. GAMBAR SAMPUL ARTIKEL -->
+                                <div class="article-card-section">
+                                    <div class="article-section-header">
+                                        <div class="article-section-icon"><i class="fa-solid fa-image"></i></div>
+                                        <div>
+                                            <h3 class="article-section-title">Gambar Sampul</h3>
+                                        </div>
+                                    </div>
+                                    <div class="article-section-body">
+                                        <?php 
+                                            $previewImg = ($editArticleData && !empty($editArticleData['image'])) ? $editArticleData['image'] : 'https://images.unsplash.com/photo-1540420773420-3366772f4999?auto=format&fit=crop&w=1200&q=80';
+                                        ?>
+                                        <div>
+                                            <img id="articleCoverPreview" src="<?= e($previewImg) ?>" alt="Sampul Artikel" style="width:100%;height:140px;object-fit:cover;border-radius:10px;border:1px solid var(--line);background:#f1f5f9">
+                                        </div>
+
+                                        <div style="margin-top:12px">
+                                            <label class="form-field-label">Unggah File Gambar <small style="color:var(--muted)">(JPG/PNG/WEBP maks 4MB)</small></label>
+                                            <input class="order-filter" type="file" name="article_image_file" id="articleImageFileInput" accept="image/jpeg,image/png,image/webp" style="font-size:11.5px">
+                                        </div>
+
+                                        <div style="margin-top:10px">
+                                            <label class="form-field-label">Atau URL Gambar Eksternal</label>
+                                            <input class="order-filter" type="text" name="article_image_url" id="articleImageUrlInput" value="<?= ($editArticleData && str_starts_with((string)$editArticleData['image'], 'http')) ? e($editArticleData['image']) : '' ?>" placeholder="https://images.unsplash.com/photo-...">
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 6. INFORMASI PENULIS -->
+                                <div class="article-card-section">
+                                    <div class="article-section-header">
+                                        <div class="article-section-icon"><i class="fa-solid fa-user-pen"></i></div>
+                                        <div>
+                                            <h3 class="article-section-title">Informasi Penulis</h3>
+                                        </div>
+                                    </div>
+                                    <div class="article-section-body">
+                                        <div>
+                                            <label class="form-field-label">Nama Penulis <span class="required-star">*</span></label>
+                                            <input class="order-filter" type="text" name="author_name" value="<?= $editArticleData ? e($editArticleData['author_name']) : 'Tim Balla’ Fresh' ?>" placeholder="Nama penulis" required>
+                                        </div>
+
+                                        <div style="margin-top:10px">
+                                            <label class="form-field-label">Jabatan / Peran Penulis</label>
+                                            <input class="order-filter" type="text" name="author_role" value="<?= $editArticleData ? e($editArticleData['author_role']) : 'Spesialis Branding & Konsultan' ?>" placeholder="Contoh: Konsultan SOP Hidroponik">
+                                        </div>
+
+                                        <div style="margin-top:10px">
+                                            <label class="form-field-label">Avatar Penulis (URL Gambar)</label>
+                                            <div style="display:flex;gap:10px;align-items:center">
+                                                <img id="authorAvatarPreview" src="<?= $editArticleData ? e($editArticleData['author_avatar']) : 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=200&q=80' ?>" alt="Avatar" style="width:38px;height:38px;border-radius:50%;object-fit:cover;border:1px solid var(--line);flex-shrink:0">
+                                                <input class="order-filter" type="text" name="author_avatar" id="authorAvatarInput" value="<?= $editArticleData ? e($editArticleData['author_avatar']) : 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=200&q=80' ?>" placeholder="https://images.unsplash.com/..." style="flex:1">
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            <?php endif; ?>
+
+            <!-- TABEL DAFTAR ARTIKEL -->
+            <article class="panel">
+                <div class="panel-head">
+                    <div>
+                        <h2>Daftar Artikel &amp; Edukasi Terdaftar</h2>
+                        <p>Kelola artikel, ubah status publikasi atau status unggulan, dan pantau jumlah pembaca.</p>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:10px">
+                        <a href="artikel.php" target="_blank" class="btn btn-light" style="font-size:12px;padding:6px 12px">
+                            <i class="fa-solid fa-arrow-up-right-from-square"></i> Buka Artikel Publik
+                        </a>
+                        <div style="font-size:12px;color:var(--muted)">
+                            Total: <strong><?= count($allArticlesList) ?></strong> artikel
+                        </div>
+                    </div>
+                </div>
+
+                <!-- FILTER KATEGORI & PENCARIAN LIVE -->
+                <div style="padding:14px 18px 0;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+                    <div class="cms-nav-pills" style="margin-bottom:0;padding:4px 8px">
+                        <button type="button" class="cms-pill active filter-art-btn" data-category="all" style="cursor:pointer">Semua (<?= count($allArticlesList) ?>)</button>
+                        <button type="button" class="cms-pill filter-art-btn" data-category="Branding &amp; Kemasan" style="cursor:pointer">Branding &amp; Kemasan</button>
+                        <button type="button" class="cms-pill filter-art-btn" data-category="Budidaya &amp; Teknis" style="cursor:pointer">Budidaya &amp; Teknis</button>
+                        <button type="button" class="cms-pill filter-art-btn" data-category="Pemasaran &amp; Penjualan" style="cursor:pointer">Pemasaran &amp; Penjualan</button>
+                        <button type="button" class="cms-pill filter-art-btn" data-category="Manajemen Bisnis" style="cursor:pointer">Manajemen Bisnis</button>
+                    </div>
+                    <div style="position:relative">
+                        <i class="fa-solid fa-magnifying-glass" style="position:absolute;left:11px;top:50%;transform:translateY(-50%);color:#94a3b8;font-size:12px"></i>
+                        <input type="text" id="adminArticleSearch" class="order-filter" placeholder="Cari judul atau penulis..." style="padding-left:32px;min-width:240px">
+                    </div>
+                </div>
+
+                <div class="table-wrap">
+                    <table style="min-width: 900px">
+                        <thead>
+                            <tr>
+                                <th style="width:70px">Sampul</th>
+                                <th>Judul Artikel &amp; Kategori</th>
+                                <th>Penulis</th>
+                                <th style="text-align:center">Dibaca</th>
+                                <th style="text-align:center">Unggulan</th>
+                                <th style="text-align:center">Status</th>
+                                <th style="text-align:center">Aksi</th>
+                            </tr>
+                        </thead>
+                        <tbody id="adminArticlesTbody">
+                            <?php if (empty($allArticlesList)): ?>
+                                <tr>
+                                    <td colspan="7"><div class="empty">Belum ada artikel. Silakan gunakan form di atas untuk membuat artikel pertama.</div></td>
+                                </tr>
+                            <?php else: ?>
+                                <?php foreach ($allArticlesList as $art):
+                                    $artImg = !empty($art['image']) ? $art['image'] : 'https://images.unsplash.com/photo-1540420773420-3366772f4999?auto=format&fit=crop&w=200&q=80';
+                                ?>
+                                    <tr class="admin-article-row" data-category="<?= e($art['category']) ?>" data-title="<?= e(strtolower($art['title'])) ?>" data-author="<?= e(strtolower($art['author_name'])) ?>">
+                                        <td>
+                                            <img src="<?= e($artImg) ?>" alt="<?= e($art['title']) ?>" class="art-admin-thumb">
+                                        </td>
+                                        <td>
+                                            <div style="font-weight:700;color:#0f172a;font-size:13px;line-height:1.35;max-width:360px">
+                                                <?= e($art['title']) ?>
+                                            </div>
+                                            <div style="margin-top:4px;display:flex;align-items:center;gap:6px">
+                                                <span class="badge-cat-pill"><?= e($art['category']) ?></span>
+                                                <span style="font-size:11px;color:#94a3b8"><i class="fa-regular fa-clock"></i> <?= e($art['read_time']) ?></span>
+                                            </div>
+                                        </td>
+                                        <td>
+                                            <div style="font-weight:600;font-size:12.5px;color:#334155"><?= e($art['author_name']) ?></div>
+                                            <div style="font-size:11px;color:var(--muted)"><?= date('d M Y', strtotime((string)$art['created_at'])) ?></div>
+                                        </td>
+                                        <td style="text-align:center;font-weight:700;font-size:12.5px;color:#2563eb">
+                                            <?= number_format((int)$art['views_count']) ?>
+                                        </td>
+                                        <td style="text-align:center">
+                                            <form method="post" action="admin_dashboard.php?page=articles" style="display:inline">
+                                                <input type="hidden" name="article_action" value="toggle_featured">
+                                                <input type="hidden" name="article_csrf" value="<?= e($_SESSION['order_status_csrf']) ?>">
+                                                <input type="hidden" name="article_id" value="<?= (int)$art['id'] ?>">
+                                                <?php if (!empty($art['is_featured'])): ?>
+                                                    <button type="submit" class="badge-featured" title="Klik untuk nonaktifkan hero" style="border:none;cursor:pointer">
+                                                        <i class="fa-solid fa-star"></i> Unggulan
+                                                    </button>
+                                                <?php else: ?>
+                                                    <button type="submit" class="badge-draft" title="Klik untuk jadikan unggulan" style="border:none;cursor:pointer">
+                                                        <i class="fa-regular fa-star"></i> Standar
+                                                    </button>
+                                                <?php endif; ?>
+                                            </form>
+                                        </td>
+                                        <td style="text-align:center">
+                                            <form method="post" action="admin_dashboard.php?page=articles" style="display:inline">
+                                                <input type="hidden" name="article_action" value="toggle_publish">
+                                                <input type="hidden" name="article_csrf" value="<?= e($_SESSION['order_status_csrf']) ?>">
+                                                <input type="hidden" name="article_id" value="<?= (int)$art['id'] ?>">
+                                                <?php if (!empty($art['is_published'])): ?>
+                                                    <button type="submit" class="badge-published" title="Klik untuk sembunyikan artikel" style="border:none;cursor:pointer">
+                                                        <i class="fa-solid fa-circle-check"></i> Publik
+                                                    </button>
+                                                <?php else: ?>
+                                                    <button type="submit" class="badge-draft" title="Klik untuk publikasikan artikel" style="border:none;cursor:pointer">
+                                                        <i class="fa-solid fa-eye-slash"></i> Draf
+                                                    </button>
+                                                <?php endif; ?>
+                                            </form>
+                                        </td>
+                                        <td style="text-align:center">
+                                            <div style="display:inline-flex;align-items:center;gap:6px">
+                                                <a href="baca_artikel.php?slug=<?= urlencode($art['slug']) ?>" target="_blank" class="btn btn-light" style="padding:5px 9px;font-size:11.5px" title="Lihat di Website">
+                                                    <i class="fa-solid fa-arrow-up-right-from-square"></i>
+                                                </a>
+                                                <a href="admin_dashboard.php?page=articles&amp;edit_article=<?= (int)$art['id'] ?>#articleForm" class="btn btn-light" style="padding:5px 9px;font-size:11.5px" title="Edit Artikel">
+                                                    <i class="fa-solid fa-pen-to-square"></i>
+                                                </a>
+                                                <form method="post" action="admin_dashboard.php?page=articles" style="display:inline" onsubmit="return confirm('Apakah Anda yakin ingin menghapus artikel ini secara permanen?')">
+                                                    <input type="hidden" name="article_action" value="delete_article">
+                                                    <input type="hidden" name="article_csrf" value="<?= e($_SESSION['order_status_csrf']) ?>">
+                                                    <input type="hidden" name="article_id" value="<?= (int)$art['id'] ?>">
+                                                    <button type="submit" class="btn btn-light" style="padding:5px 9px;font-size:11.5px;color:#ef4444" title="Hapus Artikel">
+                                                        <i class="fa-solid fa-trash"></i>
+                                                    </button>
+                                                </form>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
+                        </tbody>
+                    </table>
+                </div>
+            </article>
+
+        <?php elseif ($page === 'settings'): ?>
+            <section class="welcome-row">
+                <div>
+                    <span class="eyebrow">BALLA’ FRESH · LEGAL &amp; POLICY SETTINGS</span>
+                    <h1>Pengaturan &amp; Kebijakan Privasi</h1>
+                    <p>Kelola naskah resmi Kebijakan Privasi dan Syarat &amp; Ketentuan Layanan. Dokumen ini otomatis tayang pada modal popup profil pengguna dan tautan footer website.</p>
+                </div>
+                <span class="welcome-tag"><span></span> Mode Pengaturan: Edit-Only</span>
+            </section>
+
+            <?php if ($settingsMessage !== ''): ?>
+                <div class="order-notice <?= e($settingsMessageType) ?>" style="margin-bottom:20px"><?= e($settingsMessage) ?></div>
+            <?php endif; ?>
+
+            <!-- INFORMASI MODE EDIT-ONLY -->
+            <div class="policy-alert">
+                <i class="fa-solid fa-shield-halved" style="font-size:22px;flex-shrink:0"></i>
+                <div>
+                    <strong>Kebijakan Resmi Bersifat Edit-Only</strong>
+                    <div style="font-size:12px;margin-top:2px;line-height:1.45">
+                        Demi kepatuhan standar hukum perlindungan data pribadi dan ketentuan layanan agensi hidroponik, halaman ini hanya menyediakan fitur untuk <em>mengedit (memperbarui)</em> isi naskah yang sudah terdaftar. Penambahan konten baru secara sembarang dinonaktifkan.
+                    </div>
+                </div>
+            </div>
+
+            <article class="panel policy-edit-box">
+                <div class="panel-head" style="border-bottom:1px solid var(--line);margin:-24px -24px 20px -24px;padding:20px 24px">
+                    <div>
+                        <h2>Edit Kebijakan Privasi &amp; Syarat Ketentuan</h2>
+                        <p>Perbarui dokumen resmi agensi. Perubahan langsung berlaku secara realtime pada antarmuka mitra.</p>
+                    </div>
+                    <?php if (!empty($policyContent['policy_updated_at'])): ?>
+                        <span style="font-size:11.5px;color:var(--muted);background:#f1f5f9;padding:6px 12px;border-radius:99px">
+                            <i class="fa-regular fa-clock"></i> Terakhir diperbarui: <?= date('d M Y, H:i', strtotime((string)$policyContent['policy_updated_at'])) ?>
+                        </span>
+                    <?php endif; ?>
+                </div>
+
+                <form method="post" style="display:grid;gap:22px">
+                    <input type="hidden" name="settings_action" value="save_policies">
+                    <input type="hidden" name="settings_csrf" value="<?= e($_SESSION['order_status_csrf']) ?>">
+
+                    <!-- 1. KEBIJAKAN PRIVASI -->
+                    <div style="display:grid;gap:8px">
+                        <label style="font-size:13px;font-weight:800;color:#1e293b;display:flex;align-items:center;justify-content:space-between">
+                            <span><i class="fa-solid fa-user-shield" style="color:#5b8121;margin-right:6px"></i> 1. Naskah Kebijakan Privasi (Privacy Policy)</span>
+                            <span style="font-size:11px;font-weight:600;color:var(--muted)">Tayang di Profil &amp; Footer</span>
+                        </label>
+                        <p style="font-size:12px;color:var(--muted);margin:0">Jelaskan bagaimana Balla’ Fresh mengumpulkan, melindungi, dan memanfaatkan data identitas usaha, kontak, serta data hidroponik mitra.</p>
+                        <textarea class="order-filter" name="privacy_policy" rows="12" style="font-family:monospace;font-size:12.5px;line-height:1.6" placeholder="Ketik naskah kebijakan privasi lengkap..." required><?= e($policyContent['privacy_policy']) ?></textarea>
+                    </div>
+
+                    <!-- 2. SYARAT & KETENTUAN -->
+                    <div style="display:grid;gap:8px">
+                        <label style="font-size:13px;font-weight:800;color:#1e293b;display:flex;align-items:center;justify-content:space-between">
+                            <span><i class="fa-solid fa-file-contract" style="color:#5b8121;margin-right:6px"></i> 2. Naskah Syarat &amp; Ketentuan Layanan (Terms &amp; Conditions)</span>
+                            <span style="font-size:11px;font-weight:600;color:var(--muted)">Tayang di Profil &amp; Footer</span>
+                        </label>
+                        <p style="font-size:12px;color:var(--muted);margin:0">Jelaskan hak, kewajiban, ketentuan pembayaran, hak kekayaan intelektual karya desain, serta tata cara konsultasi agensi.</p>
+                        <textarea class="order-filter" name="terms_conditions" rows="12" style="font-family:monospace;font-size:12.5px;line-height:1.6" placeholder="Ketik naskah syarat dan ketentuan layanan lengkap..." required><?= e($policyContent['terms_conditions']) ?></textarea>
+                    </div>
+
+                    <div style="display:flex;align-items:center;justify-content:space-between;padding-top:12px;border-top:1px solid var(--line)">
+                        <span style="font-size:12px;color:var(--muted)"><i class="fa-solid fa-circle-info"></i> Perubahan tersimpan ke database `agency_site_content` pada ID 1.</span>
+                        <button class="btn" type="submit" style="padding:10px 24px">
+                            <i class="fa-solid fa-floppy-disk"></i> Simpan Perubahan Kebijakan
+                        </button>
+                    </div>
+                </form>
             </article>
         <?php endif; ?>
         </div>
@@ -1475,6 +5390,48 @@ if (count($nameParts) >= 2) {
     </div>
 </div>
 
+<!-- LIGHTBOX MODAL PREVIEW GAMBAR CHAT -->
+<div id="chatLightbox" class="chat-lightbox" role="dialog" aria-modal="true" aria-label="Pratinjau Gambar Lampiran">
+    <div class="chat-lightbox-inner">
+        <div style="width:100%;display:flex;justify-content:space-between;align-items:center;color:#fff;padding:0 4px">
+            <span id="chatLightboxTitle" style="font-size:13px;font-weight:600;max-width:70vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+            <div style="display:flex;gap:10px;align-items:center">
+                <a id="chatLightboxDl" href="#" download="" class="btn" style="background:rgba(255,255,255,0.2);color:#fff;padding:6px 14px;font-size:12px;border:none;border-radius:6px;text-decoration:none">
+                    <i class="fa-solid fa-download"></i> Unduh
+                </a>
+                <button type="button" onclick="closeChatLightbox()" style="background:rgba(255,255,255,0.2);color:#fff;border:none;width:32px;height:32px;border-radius:50%;cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+        </div>
+        <img id="chatLightboxImg" src="" alt="Pratinjau Gambar" class="chat-lightbox-img">
+    </div>
+</div>
+
+<!-- MODAL INSERT LINK UNTUK RICH TEXT EDITOR -->
+<div id="rteLinkModal" class="rte-modal-overlay" role="dialog" aria-modal="true" aria-label="Sisipkan Tautan">
+    <div class="rte-modal-card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+            <h4 style="margin:0;font-size:15px;font-weight:800;color:#0f172a"><i class="fa-solid fa-link" style="color:var(--green);margin-right:6px"></i> Sisipkan Tautan Web</h4>
+            <button type="button" id="rteLinkCloseBtn" style="background:none;border:none;color:#94a3b8;font-size:16px;cursor:pointer"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div style="display:grid;gap:12px">
+            <div>
+                <label class="form-field-label">Teks yang Ditampilkan</label>
+                <input class="order-filter" type="text" id="rteLinkTextInput" placeholder="Contoh: Baca panduan lengkap di sini">
+            </div>
+            <div>
+                <label class="form-field-label">Alamat URL Tautan <span class="required-star">*</span></label>
+                <input class="order-filter" type="url" id="rteLinkUrlInput" placeholder="https://contoh-website.com">
+            </div>
+            <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:6px">
+                <button type="button" id="rteLinkCancelBtn" class="btn btn-light" style="padding:8px 16px;font-size:12px">Batal</button>
+                <button type="button" id="rteLinkApplyBtn" class="btn btn-primary" style="padding:8px 18px;font-size:12px">Sisipkan Tautan</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script>
 const orderStatusFilter = document.getElementById('orderStatusFilter');
 if (orderStatusFilter) {
@@ -1491,6 +5448,136 @@ if (todayLabel) {
     todayLabel.textContent = new Intl.DateTimeFormat('id-ID', {
         day: 'numeric', month: 'long', year: 'numeric'
     }).format(new Date());
+}
+
+const adminChatScroll = document.getElementById('adminChatScroll');
+if (adminChatScroll) {
+    adminChatScroll.scrollTop = adminChatScroll.scrollHeight;
+}
+
+// ===== CHAT ATTACHMENTS & LIGHTBOX ADMIN =====
+const chatLightbox = document.getElementById('chatLightbox');
+const chatLightboxImg = document.getElementById('chatLightboxImg');
+const chatLightboxTitle = document.getElementById('chatLightboxTitle');
+const chatLightboxDl = document.getElementById('chatLightboxDl');
+
+function openChatLightbox(url, title) {
+    if (!chatLightbox || !chatLightboxImg) return;
+    chatLightboxImg.src = url;
+    if (chatLightboxTitle) chatLightboxTitle.textContent = title || 'Pratinjau Gambar';
+    if (chatLightboxDl) {
+        chatLightboxDl.href = url;
+        chatLightboxDl.setAttribute('download', title || 'gambar');
+    }
+    chatLightbox.classList.add('show');
+}
+
+function closeChatLightbox() {
+    if (!chatLightbox) return;
+    chatLightbox.classList.remove('show');
+    if (chatLightboxImg) chatLightboxImg.src = '';
+}
+
+if (chatLightbox) {
+    chatLightbox.addEventListener('click', function(e) {
+        if (e.target === chatLightbox) closeChatLightbox();
+    });
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape' && chatLightbox.classList.contains('show')) {
+            closeChatLightbox();
+        }
+    });
+}
+
+// Handler Lampiran File Chat Admin
+const adminChatFilesInput = document.getElementById('adminChatFilesInput');
+const adminFilePreviewWrap = document.getElementById('adminFilePreviewWrap');
+const adminChatForm = document.getElementById('adminChatForm');
+const adminChatMessage = document.getElementById('adminChatMessage');
+
+let adminChatDT = new DataTransfer();
+
+function renderAdminFileChips() {
+    if (!adminFilePreviewWrap) return;
+    adminFilePreviewWrap.innerHTML = '';
+    const files = adminChatDT.files;
+    if (files.length === 0) {
+        adminFilePreviewWrap.style.display = 'none';
+        return;
+    }
+    adminFilePreviewWrap.style.display = 'flex';
+
+    Array.from(files).forEach((file, index) => {
+        const chip = document.createElement('div');
+        chip.className = 'admin-file-chip';
+
+        let iconClass = 'fa-file-lines';
+        if (file.type.startsWith('image/')) iconClass = 'fa-file-image';
+        else if (file.type.startsWith('video/')) iconClass = 'fa-file-video';
+        else if (file.type.includes('pdf')) iconClass = 'fa-file-pdf';
+        else if (file.type.includes('word') || file.name.match(/\.(docx?)$/i)) iconClass = 'fa-file-word';
+        else if (file.type.includes('sheet') || file.type.includes('excel') || file.name.match(/\.(xlsx?|csv)$/i)) iconClass = 'fa-file-excel';
+        else if (file.type.includes('presentation') || file.name.match(/\.(pptx?)$/i)) iconClass = 'fa-file-powerpoint';
+
+        const sizeFormatted = file.size >= 1048576 ? (file.size / 1048576).toFixed(1) + ' MB' : (file.size / 1024).toFixed(0) + ' KB';
+
+        chip.innerHTML = `
+            <i class="fa-solid ${iconClass}" style="color:#5b8121"></i>
+            <span title="${file.name}">${file.name} (${sizeFormatted})</span>
+            <button type="button" data-index="${index}" title="Hapus file">&times;</button>
+        `;
+
+        chip.querySelector('button').addEventListener('click', function(e) {
+            e.stopPropagation();
+            removeAdminChatFile(index);
+        });
+
+        adminFilePreviewWrap.appendChild(chip);
+    });
+}
+
+function removeAdminChatFile(index) {
+    const newDT = new DataTransfer();
+    Array.from(adminChatDT.files).forEach((file, i) => {
+        if (i !== index) newDT.items.add(file);
+    });
+    adminChatDT = newDT;
+    if (adminChatFilesInput) adminChatFilesInput.files = adminChatDT.files;
+    renderAdminFileChips();
+}
+
+if (adminChatFilesInput) {
+    adminChatFilesInput.addEventListener('change', function() {
+        const maxFiles = 5;
+        const maxBytes = 20 * 1024 * 1024; // 20 MB
+
+        Array.from(this.files).forEach(file => {
+            if (adminChatDT.files.length >= maxFiles) {
+                alert('Maksimal lampiran adalah 5 file dalam sekali kirim.');
+                return;
+            }
+            if (file.size > maxBytes) {
+                alert(`File "${file.name}" melebihi ukuran maksimum 20 MB.`);
+                return;
+            }
+            adminChatDT.items.add(file);
+        });
+
+        adminChatFilesInput.files = adminChatDT.files;
+        renderAdminFileChips();
+    });
+}
+
+if (adminChatForm) {
+    adminChatForm.addEventListener('submit', function(e) {
+        const textVal = adminChatMessage ? adminChatMessage.value.trim() : '';
+        const filesCount = adminChatDT ? adminChatDT.files.length : 0;
+        if (textVal === '' && filesCount === 0) {
+            e.preventDefault();
+            alert('Silakan tulis pesan atau pilih minimal satu file lampiran.');
+            if (adminChatMessage) adminChatMessage.focus();
+        }
+    });
 }
 
 const sidebar = document.getElementById('sidebar');
@@ -1553,6 +5640,308 @@ document.addEventListener('keydown', function(event) {
         closeLogoutModal();
     }
 });
+
+// ===== FILTER & PENCARIAN LIVE ARTIKEL ADMIN =====
+const adminArticleSearch = document.getElementById('adminArticleSearch');
+const artCatButtons = document.querySelectorAll('.filter-art-btn');
+const articleRows = document.querySelectorAll('.admin-article-row');
+let currentArtCat = 'all';
+
+function filterAdminArticles() {
+    const query = (adminArticleSearch ? adminArticleSearch.value : '').toLowerCase().trim();
+    articleRows.forEach(row => {
+        const cat = row.getAttribute('data-category') || '';
+        const title = (row.getAttribute('data-title') || '').toLowerCase();
+        const author = (row.getAttribute('data-author') || '').toLowerCase();
+
+        const matchCat = (currentArtCat === 'all' || cat === currentArtCat);
+        const matchQuery = (query === '' || title.includes(query) || author.includes(query));
+
+        row.style.display = (matchCat && matchQuery) ? '' : 'none';
+    });
+}
+
+if (adminArticleSearch) {
+    adminArticleSearch.addEventListener('input', filterAdminArticles);
+}
+
+artCatButtons.forEach(btn => {
+    btn.addEventListener('click', function() {
+        artCatButtons.forEach(b => b.classList.remove('active'));
+        this.classList.add('active');
+        currentArtCat = this.getAttribute('data-category') || 'all';
+        filterAdminArticles();
+    });
+});
+
+// ===== RICH TEXT EDITOR (WYSIWYG) ARTIKEL =====
+const articleEditorCanvas = document.getElementById('articleEditorCanvas');
+const articleContentInput = document.getElementById('articleContentInput');
+const rteHeadingSelect = document.getElementById('rteHeadingSelect');
+const rteFontSizeSelect = document.getElementById('rteFontSizeSelect');
+const rteWordCount = document.getElementById('rteWordCount');
+const rteCharCount = document.getElementById('rteCharCount');
+const articleMainForm = document.getElementById('articleMainForm');
+
+// Modal Link
+const rteLinkModal = document.getElementById('rteLinkModal');
+const rteBtnInsertLink = document.getElementById('rteBtnInsertLink');
+const rteLinkCloseBtn = document.getElementById('rteLinkCloseBtn');
+const rteLinkCancelBtn = document.getElementById('rteLinkCancelBtn');
+const rteLinkApplyBtn = document.getElementById('rteLinkApplyBtn');
+const rteLinkTextInput = document.getElementById('rteLinkTextInput');
+const rteLinkUrlInput = document.getElementById('rteLinkUrlInput');
+let savedSelectionRange = null;
+
+function syncEditorContent() {
+    if (!articleEditorCanvas || !articleContentInput) return;
+    const html = articleEditorCanvas.innerHTML;
+    const textOnly = (articleEditorCanvas.textContent || '').trim();
+    if (textOnly === '' && !html.includes('<img') && !html.includes('<table')) {
+        articleContentInput.value = '';
+    } else {
+        articleContentInput.value = html;
+    }
+    updateEditorCounts();
+}
+
+function updateEditorCounts() {
+    if (!articleEditorCanvas) return;
+    const text = (articleEditorCanvas.textContent || '').trim();
+    const words = text ? text.split(/\s+/).filter(w => w.length > 0).length : 0;
+    const chars = text.length;
+    if (rteWordCount) rteWordCount.innerHTML = `<i class="fa-solid fa-pen-nib" style="margin-right:4px"></i> ${words} kata`;
+    if (rteCharCount) rteCharCount.textContent = `${chars} karakter`;
+}
+
+function updateRteToolbarState() {
+    if (!articleEditorCanvas) return;
+    ['bold', 'italic', 'underline', 'strikeThrough', 'justifyLeft', 'justifyCenter', 'justifyRight', 'insertUnorderedList', 'insertOrderedList'].forEach(cmd => {
+        const btn = document.querySelector(`.rte-btn[data-command="${cmd}"]`);
+        if (btn) {
+            try {
+                if (document.queryCommandState(cmd)) {
+                    btn.classList.add('active');
+                } else {
+                    btn.classList.remove('active');
+                }
+            } catch (err) {}
+        }
+    });
+}
+
+// Inisialisasi konten awal ke dalam canvas
+if (articleEditorCanvas && articleContentInput) {
+    if (articleContentInput.value.trim() !== '') {
+        articleEditorCanvas.innerHTML = articleContentInput.value;
+    }
+    updateEditorCounts();
+
+    articleEditorCanvas.addEventListener('input', syncEditorContent);
+    articleEditorCanvas.addEventListener('blur', syncEditorContent);
+    articleEditorCanvas.addEventListener('keyup', () => {
+        syncEditorContent();
+        updateRteToolbarState();
+    });
+    articleEditorCanvas.addEventListener('mouseup', updateRteToolbarState);
+}
+
+// Toolbar button click commands
+document.querySelectorAll('.rte-btn[data-command]').forEach(btn => {
+    btn.addEventListener('click', function(e) {
+        e.preventDefault();
+        const cmd = this.getAttribute('data-command');
+        if (!cmd) return;
+        articleEditorCanvas?.focus();
+        document.execCommand(cmd, false, null);
+        syncEditorContent();
+        updateRteToolbarState();
+    });
+});
+
+// Headings change
+if (rteHeadingSelect) {
+    rteHeadingSelect.addEventListener('change', function() {
+        const tag = this.value;
+        if (!tag) return;
+        articleEditorCanvas?.focus();
+        document.execCommand('formatBlock', false, tag);
+        syncEditorContent();
+        this.value = 'p';
+    });
+}
+
+// Font size change
+if (rteFontSizeSelect) {
+    rteFontSizeSelect.addEventListener('change', function() {
+        const size = this.value;
+        if (!size) return;
+        articleEditorCanvas?.focus();
+        const sel = window.getSelection();
+        if (!sel || !sel.rangeCount || sel.isCollapsed) {
+            alert('Silakan sorot (blok) teks yang ingin diubah ukuran fontnya terlebih dahulu.');
+            this.value = '';
+            return;
+        }
+        const range = sel.getRangeAt(0);
+        const span = document.createElement('span');
+        span.style.fontSize = size;
+        span.appendChild(range.extractContents());
+        range.insertNode(span);
+
+        sel.removeAllRanges();
+        const newRange = document.createRange();
+        newRange.selectNodeContents(span);
+        sel.addRange(newRange);
+
+        syncEditorContent();
+        this.value = '';
+    });
+}
+
+// Modal Link Handling
+function openLinkModal() {
+    if (!rteLinkModal) return;
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount > 0) {
+        savedSelectionRange = sel.getRangeAt(0).cloneRange();
+        if (rteLinkTextInput) rteLinkTextInput.value = sel.toString().trim();
+    } else {
+        savedSelectionRange = null;
+        if (rteLinkTextInput) rteLinkTextInput.value = '';
+    }
+    if (rteLinkUrlInput) rteLinkUrlInput.value = 'https://';
+    rteLinkModal.classList.add('show');
+    rteLinkUrlInput?.focus();
+}
+
+function closeLinkModal() {
+    if (!rteLinkModal) return;
+    rteLinkModal.classList.remove('show');
+    savedSelectionRange = null;
+}
+
+if (rteBtnInsertLink) {
+    rteBtnInsertLink.addEventListener('click', function(e) {
+        e.preventDefault();
+        openLinkModal();
+    });
+}
+if (rteLinkCloseBtn) rteLinkCloseBtn.addEventListener('click', closeLinkModal);
+if (rteLinkCancelBtn) rteLinkCancelBtn.addEventListener('click', closeLinkModal);
+if (rteLinkModal) {
+    rteLinkModal.addEventListener('click', function(e) {
+        if (e.target === rteLinkModal) closeLinkModal();
+    });
+}
+
+if (rteLinkApplyBtn) {
+    rteLinkApplyBtn.addEventListener('click', function() {
+        let url = (rteLinkUrlInput ? rteLinkUrlInput.value.trim() : '');
+        const text = (rteLinkTextInput ? rteLinkTextInput.value.trim() : '');
+        if (!url || url === 'https://') {
+            alert('Silakan masukkan alamat URL tautan yang valid.');
+            return;
+        }
+        if (!/^https?:\/\//i.test(url) && !url.startsWith('/') && !url.startsWith('#') && !url.startsWith('mailto:')) {
+            url = 'https://' + url;
+        }
+
+        articleEditorCanvas?.focus();
+        const sel = window.getSelection();
+        if (savedSelectionRange && sel) {
+            sel.removeAllRanges();
+            sel.addRange(savedSelectionRange);
+        }
+
+        if (savedSelectionRange && !savedSelectionRange.collapsed) {
+            document.execCommand('createLink', false, url);
+        } else {
+            const anchor = document.createElement('a');
+            anchor.href = url;
+            anchor.target = '_blank';
+            anchor.rel = 'noopener noreferrer';
+            anchor.textContent = text || url;
+            if (savedSelectionRange) {
+                savedSelectionRange.insertNode(anchor);
+            } else if (articleEditorCanvas) {
+                articleEditorCanvas.appendChild(anchor);
+            }
+        }
+
+        closeLinkModal();
+        syncEditorContent();
+    });
+}
+
+// Pastikan sebelum submit form, sync terakhir dieksekusi
+if (articleMainForm) {
+    articleMainForm.addEventListener('submit', function(e) {
+        syncEditorContent();
+        const textOnly = (articleEditorCanvas ? articleEditorCanvas.textContent : '').trim();
+        const html = articleContentInput ? articleContentInput.value.trim() : '';
+        if (html === '' || (textOnly === '' && !html.includes('<img'))) {
+            e.preventDefault();
+            alert('Isi konten artikel wajib diisi.');
+            articleEditorCanvas?.focus();
+        }
+    });
+}
+
+// Auto generate slug dari judul
+const articleTitleInput = document.getElementById('articleTitleInput');
+const articleSlugInput = document.getElementById('articleSlugInput');
+if (articleTitleInput && articleSlugInput) {
+    articleTitleInput.addEventListener('input', function() {
+        if (!articleSlugInput.dataset.manualEdited) {
+            articleSlugInput.value = this.value
+                .toLowerCase()
+                .trim()
+                .replace(/[^\w\s-]/g, '')
+                .replace(/[\s_-]+/g, '-')
+                .replace(/^-+|-+$/g, '');
+        }
+    });
+    articleSlugInput.addEventListener('input', function() {
+        this.dataset.manualEdited = 'true';
+    });
+}
+
+// Live preview gambar sampul dan avatar penulis
+const articleImageFileInput = document.getElementById('articleImageFileInput');
+const articleImageUrlInput = document.getElementById('articleImageUrlInput');
+const articleCoverPreview = document.getElementById('articleCoverPreview');
+
+if (articleImageFileInput && articleCoverPreview) {
+    articleImageFileInput.addEventListener('change', function() {
+        if (this.files && this.files[0]) {
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                articleCoverPreview.src = e.target.result;
+            };
+            reader.readAsDataURL(this.files[0]);
+        }
+    });
+}
+if (articleImageUrlInput && articleCoverPreview) {
+    articleImageUrlInput.addEventListener('input', function() {
+        const val = this.value.trim();
+        if (val.startsWith('http')) {
+            articleCoverPreview.src = val;
+        }
+    });
+}
+
+const authorAvatarInput = document.getElementById('authorAvatarInput');
+const authorAvatarPreview = document.getElementById('authorAvatarPreview');
+if (authorAvatarInput && authorAvatarPreview) {
+    authorAvatarInput.addEventListener('input', function() {
+        const val = this.value.trim();
+        if (val.startsWith('http')) {
+            authorAvatarPreview.src = val;
+        }
+    });
+}
 </script>
 </body>
 </html>

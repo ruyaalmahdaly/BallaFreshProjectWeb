@@ -19,7 +19,14 @@ if (!$phoneColumnCheck || $phoneColumnCheck->num_rows === 0) {
 }
 $phoneColumnCheck->free();
 
-$config = require __DIR__ . '/smtp_config.php';
+$rawConfig = file_exists(__DIR__ . '/smtp_config.php') ? require __DIR__ . '/smtp_config.php' : [];
+$config = is_array($rawConfig) ? $rawConfig : [];
+$config['host']       = getenv('SMTP_HOST') ?: ($config['host'] ?? 'smtp.gmail.com');
+$config['port']       = (int)(getenv('SMTP_PORT') ?: ($config['port'] ?? 587));
+$config['username']   = getenv('SMTP_USER') ?: ($config['username'] ?? 'ballafresh01@gmail.com');
+$config['password']   = getenv('SMTP_PASS') ?: ($config['password'] ?? '');
+$config['from_email'] = getenv('SMTP_FROM_EMAIL') ?: ($config['from_email'] ?? 'ballafresh01@gmail.com');
+$config['from_name']  = getenv('SMTP_FROM_NAME') ?: ($config['from_name'] ?? "Balla' Fresh");
 
 $error = '';
 $success = '';

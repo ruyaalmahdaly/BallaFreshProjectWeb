@@ -1,19 +1,30 @@
 <?php
 
-$sessionPath = 'C:\\xampp\\session_data';
-
-if (!is_dir($sessionPath)) {
-    @mkdir($sessionPath, 0700, true);
-}
-
-if (!is_dir($sessionPath) || !is_writable($sessionPath)) {
-    http_response_code(500);
-    exit('Folder session tidak tersedia.');
+// Tentukan path session yang kompatibel untuk Windows (XAMPP) maupun Linux / Vercel (serverless)
+$sessionPath = null;
+if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
+    $sessionPath = 'C:\\xampp\\session_data';
+    if (!is_dir($sessionPath)) {
+        @mkdir($sessionPath, 0700, true);
+    }
+    if (!is_dir($sessionPath) || !is_writable($sessionPath)) {
+        $sessionPath = sys_get_temp_dir();
+    }
+} else {
+    // Linux / Vercel / Cloud serverless
+    $sessionPath = sys_get_temp_dir() . '/session_data';
+    if (!is_dir($sessionPath)) {
+        @mkdir($sessionPath, 0700, true);
+    }
+    if (!is_dir($sessionPath) || !is_writable($sessionPath)) {
+        $sessionPath = sys_get_temp_dir();
+    }
 }
 
 if (session_status() === PHP_SESSION_NONE) {
-
-    session_save_path($sessionPath);
+    if (!empty($sessionPath) && is_dir($sessionPath) && is_writable($sessionPath)) {
+        @session_save_path($sessionPath);
+    }
 
     ini_set('session.use_strict_mode', '1');
     ini_set('session.use_only_cookies', '1');

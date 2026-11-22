@@ -1,17 +1,16 @@
-
 .env
 .env.*
 !.env.example
+env.local.php
+*.local.php
 /vendor/
 /node_modules/
 /.vercel/
 /.DS_Store
 Thumbs.db
 *.log
-# Konfigurasi lokal dan rahasia
-smtp_config.php
-db.php
 
 # File pengujian lokal
 test.php
 test_db.php
+scratch/

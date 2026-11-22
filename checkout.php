@@ -3,6 +3,9 @@ declare(strict_types=1);
 
 require_once __DIR__ . "/session_bootstrap.php";
 require_once __DIR__ . "/db.php";
+if (file_exists(__DIR__ . "/midtrans_config.php")) {
+    require_once __DIR__ . "/midtrans_config.php";
+}
 
 function sendJson($data, $status = 200)
 {
@@ -52,12 +55,18 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
     $socialMedia = cleanText($data["social_media"] ?? "");
     $websiteUrl = cleanText($data["website_url"] ?? "");
     $paymentMethod = cleanText($data["payment_method"] ?? "midtrans");
+    $subPaymentMethod = cleanText($data["sub_payment_method"] ?? "qris");
     $notes = cleanText($data["notes"] ?? "");
     $items = $data["items"] ?? [];
 
     $allowedPaymentMethods = ["midtrans", "bca", "mandiri", "bri"];
     if (!in_array($paymentMethod, $allowedPaymentMethods, true)) {
         $paymentMethod = "midtrans";
+    }
+
+    $allowedSubMethods = ["qris", "gopay", "shopeepay", "bca_va", "bni_va", "bri_va", "mandiri_va"];
+    if (!in_array($subPaymentMethod, $allowedSubMethods, true)) {
+        $subPaymentMethod = "qris";
     }
 
     if (
@@ -225,22 +234,115 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
         }
         $serviceStmt->close();
 
+        $userId = isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null;
+        $chargeRes = null;
+        $chargeSuccess = false;
+        $midtransError = null;
+        $paymentType = ($paymentMethod === 'midtrans') ? $subPaymentMethod : $paymentMethod;
+        $paymentCode = null;
+        $billerCode = null;
+        $qrUrl = null;
+        $qrString = null;
+        $deeplinkUrl = null;
+        $expiryTime = null;
+        $midtransTransactionId = null;
+        $transactionStatus = 'pending';
+        $midtransRaw = null;
+        $chargeSuccess = false;
+        $midtransError = null;
+
+        if ($paymentMethod === 'midtrans') {
+            if (function_exists('isMidtransConfigured') && isMidtransConfigured()) {
+                $itemDetails = [];
+                $itemsSum = 0;
+                foreach ($orderItemsData as $it) {
+                    $roundedPrice = (int) round($it['unit_price']);
+                    $itemDetails[] = [
+                        'id' => (string)$it['service_id'],
+                        'price' => $roundedPrice,
+                        'quantity' => (int) $it['quantity'],
+                        'name' => mb_substr($it['name'], 0, 50, 'UTF-8')
+                    ];
+                    $itemsSum += ($roundedPrice * (int)$it['quantity']);
+                }
+
+                $grossAmountInt = (int) round($totalAmount);
+                if ($itemsSum !== $grossAmountInt && !empty($itemDetails)) {
+                    $diff = $grossAmountInt - $itemsSum;
+                    $lastIdx = count($itemDetails) - 1;
+                    $itemDetails[$lastIdx]['price'] += $diff;
+                }
+
+                $customerDetails = [
+                    'first_name' => $name,
+                    'email'      => $email,
+                    'phone'      => $phone,
+                    'billing_address' => [
+                        'first_name' => $name,
+                        'email'      => $email,
+                        'phone'      => $phone,
+                        'address'    => mb_substr($address, 0, 200, 'UTF-8')
+                    ]
+                ];
+
+                // Panggil Midtrans Core API Charge untuk mendapatkan QRIS / Kode Pembayaran Resmi
+                $chargeRes = createMidtransCoreCharge(
+                    $subPaymentMethod,
+                    $orderNumber,
+                    $totalAmount,
+                    $customerDetails,
+                    $itemDetails
+                );
+
+                if (!empty($chargeRes['success'])) {
+                    $chargeSuccess = true;
+                    $midtransTransactionId = $chargeRes['transaction_id'] ?? null;
+                    $paymentType = $chargeRes['payment_type'] ?? $subPaymentMethod;
+                    $transactionStatus = $chargeRes['transaction_status'] ?? 'pending';
+                    $expiryTime = !empty($chargeRes['expiry_time']) ? date('Y-m-d H:i:s', strtotime((string)$chargeRes['expiry_time'])) : null;
+                    $paymentCode = $chargeRes['payment_code'] ?? null;
+                    $billerCode = $chargeRes['biller_code'] ?? null;
+                    $qrUrl = $chargeRes['qr_url'] ?? null;
+                    $qrString = $chargeRes['qr_string'] ?? null;
+                    $deeplinkUrl = $chargeRes['deeplink_url'] ?? null;
+                    $midtransRaw = $chargeRes['raw_response'] ?? null;
+                } else {
+                    $midtransError = $chargeRes['error'] ?? 'Gagal membuat transaksi Midtrans Sandbox.';
+                    error_log("Midtrans Core Charge Error: " . $midtransError);
+                }
+            } else {
+                $midtransError = 'Kunci Midtrans Sandbox belum diatur. Silakan periksa MIDTRANS_SERVER_KEY dan CLIENT_KEY pada midtrans_config.php.';
+            }
+        }
+
         // 5. Simpan pesanan ke tabel orders
         $orderStmt = $conn->prepare("
             INSERT INTO orders
-                (order_number, customer_id, total_amount, status, notes, payment_method, business_name, social_media, website_url)
-            VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?)
+                (order_number, customer_id, total_amount, status, notes, payment_method, payment_type, payment_code, biller_code, qr_url, qr_string, deeplink_url, expiry_time, midtrans_transaction_id, gross_amount, transaction_status, payment_status, business_name, social_media, website_url, user_id, midtrans_response)
+            VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'menunggu_pembayaran', ?, ?, ?, ?, ?)
         ");
         $orderStmt->bind_param(
-            "sidsssss",
+            "sidssssssssssdssssis",
             $orderNumber,
             $customerId,
             $totalAmount,
             $finalNotes,
             $paymentMethod,
+            $paymentType,
+            $paymentCode,
+            $billerCode,
+            $qrUrl,
+            $qrString,
+            $deeplinkUrl,
+            $expiryTime,
+            $midtransTransactionId,
+            $totalAmount,
+            $transactionStatus,
             $businessName,
             $socialMedia,
-            $websiteUrl
+            $websiteUrl,
+            $userId,
+            $midtransRaw
         );
         $orderStmt->execute();
         $orderId = (int) $conn->insert_id;
@@ -267,7 +369,22 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
         }
         $itemStmt->close();
 
+        // 7. Catat inisiasi transaksi ke order_transactions
+        $logStmt = $conn->prepare("
+            INSERT INTO order_transactions
+                (order_id, order_number, midtrans_transaction_id, payment_type, gross_amount, transaction_status, raw_response)
+            VALUES (?, ?, ?, ?, ?, 'pending', ?)
+        ");
+        if ($logStmt) {
+            $logStmt->bind_param("isssds", $orderId, $orderNumber, $midtransTransactionId, $paymentType, $totalAmount, $midtransRaw);
+            $logStmt->execute();
+            $logStmt->close();
+        }
+
         $conn->commit();
+
+        $subMeta = function_exists('getPaymentSubMethodMeta') ? getPaymentSubMethodMeta($subPaymentMethod) : [];
+        $displayPaymentLabel = ($paymentMethod === 'midtrans') ? ($subMeta['label'] ?? 'Midtrans') : $selectedPaymentLabel;
 
         sendJson([
             "success" => true,
@@ -275,8 +392,17 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
             "order_number" => $orderNumber,
             "total_amount" => $totalAmount,
             "payment_method" => $paymentMethod,
-            "payment_label" => $selectedPaymentLabel,
-            "business_name" => $businessName
+            "sub_payment_method" => $subPaymentMethod,
+            "payment_label" => $displayPaymentLabel,
+            "business_name" => $businessName,
+            "payment_url" => "payment_pending.php?order_id=" . urlencode($orderNumber),
+            "charge_success" => $chargeSuccess,
+            "payment_code" => $paymentCode,
+            "biller_code" => $billerCode,
+            "qr_url" => $qrUrl,
+            "deeplink_url" => $deeplinkUrl,
+            "midtrans_configured" => function_exists('isMidtransConfigured') ? isMidtransConfigured() : false,
+            "midtrans_error" => $midtransError
         ]);
 
     } catch (Throwable $e) {
@@ -371,6 +497,14 @@ if ($isUserLoggedIn) {
 
     <!-- Icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+
+    <!-- Midtrans Snap JS (Sandbox) -->
+    <?php if (defined('MIDTRANS_SNAP_JS_URL') && defined('MIDTRANS_CLIENT_KEY')): ?>
+        <script type="text/javascript"
+            src="<?= MIDTRANS_SNAP_JS_URL ?>"
+            data-client-key="<?= htmlspecialchars(MIDTRANS_CLIENT_KEY, ENT_QUOTES, 'UTF-8') ?>">
+        </script>
+    <?php endif; ?>
 
     <style>
         :root {
@@ -1384,15 +1518,31 @@ if ($isUserLoggedIn) {
                                     <span class="channel-pill channel-shopee">ShopeePay</span>
                                 </div>
                             </div>
-                            <div class="payment-details-box">
-                                <div style="display:flex;align-items:flex-start;gap:10px;">
+                            <div class="payment-details-box" id="midtransDetailsBox">
+                                <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:12px;">
                                     <i class="fa-solid fa-bolt" style="color:var(--orange);font-size:16px;margin-top:2px;"></i>
                                     <div>
-                                        <strong>Mendukung Pembayaran Instan:</strong>
-                                        <p style="color:var(--muted);margin-top:2px;">
-                                            Scan QRIS (BCA, Mandiri, BRI, BNI, Dana, OVO, LinkAja), E-Wallet langsung, dan Kartu Kredit/Debit. Status pesanan akan terverifikasi secara otomatis oleh sistem gateway.
+                                        <strong>Pilih Opsi Pembayaran Midtrans:</strong>
+                                        <p style="color:var(--muted);margin-top:2px;font-size:12.5px;">
+                                            Pilih saluran pembayaran yang Anda inginkan. QR Code atau Nomor Virtual Account resmi akan langsung ditampilkan di halaman pembayaran.
                                         </p>
                                     </div>
+                                </div>
+
+                                <div class="form-group full" style="margin-bottom:4px;">
+                                    <label for="subPaymentMethodSelect" style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:6px;display:flex;align-items:center;gap:6px;">
+                                        <span>Pilih Metode / Opsi Pembayaran</span>
+                                        <span style="color:#ef4444">*</span>
+                                    </label>
+                                    <select id="subPaymentMethodSelect" name="sub_payment_method" class="form-select" style="width:100%;padding:12px 14px;border:1.5px solid var(--border);border-radius:12px;font-size:13.5px;font-weight:600;color:var(--text);background:#fff;cursor:pointer;outline:none;" onchange="handleSubPaymentChange(this.value)">
+                                        <option value="" disabled selected>-- Pilih Opsi E-Wallet / QRIS --</option>
+                                        <option value="qris">📱 QRIS (Semua Bank &amp; E-Wallet: BCA, Mandiri, BRI, BNI, GoPay, OVO, ShopeePay, Dana, LinkAja)</option>
+                                        <option value="gopay">🟢 GoPay (QR Code &amp; Aplikasi GoPay)</option>
+                                        <option value="shopeepay">🟠 ShopeePay (QR Code &amp; Aplikasi Shopee)</option>
+                                    </select>
+                                    <small id="subPaymentError" style="color:#ef4444;font-size:12px;display:none;margin-top:4px;">
+                                        <i class="fa-solid fa-circle-exclamation"></i> Silakan tentukan opsi pembayaran Midtrans terlebih dahulu sebelum menekan tombol Bayar.
+                                    </small>
                                 </div>
                             </div>
                         </div>
@@ -1473,6 +1623,7 @@ if ($isUserLoggedIn) {
 
                     <!-- Hidden input to hold current selected method -->
                     <input type="hidden" name="payment_method" id="selectedPaymentMethod" value="midtrans">
+                    <input type="hidden" name="sub_payment_method" id="selectedSubPaymentMethod" value="">
                 </section>
             </div>
 
@@ -1575,6 +1726,31 @@ const previewPaymentText = document.getElementById("previewPaymentText");
 
 // Pilihan Metode Pembayaran
 let currentPaymentMethod = "midtrans";
+let currentSubPaymentMethod = "";
+
+function handleSubPaymentChange(val) {
+    currentSubPaymentMethod = val;
+    const subInput = document.getElementById("selectedSubPaymentMethod");
+    if (subInput) subInput.value = val;
+    const err = document.getElementById("subPaymentError");
+    if (err) err.style.display = "none";
+    const selectEl = document.getElementById("subPaymentMethodSelect");
+    if (selectEl) selectEl.style.borderColor = "";
+
+    const labels = {
+        'qris': 'QRIS (Instan)',
+        'gopay': 'GoPay',
+        'shopeepay': 'ShopeePay',
+        'bca_va': 'BCA Virtual Account',
+        'bni_va': 'BNI Virtual Account',
+        'bri_va': 'BRI Virtual Account',
+        'mandiri_va': 'Mandiri Bill Payment'
+    };
+
+    const labelText = labels[val] || 'Midtrans';
+    previewPaymentText.innerHTML = `<i class="fa-solid fa-bolt" style="color:var(--orange)"></i> Midtrans (${labelText})`;
+    submitButton.innerHTML = `<span>Bayar via ${labelText}</span> <i class="fa-solid fa-arrow-right"></i>`;
+}
 
 function selectPaymentMethod(method) {
     currentPaymentMethod = method;
@@ -1586,8 +1762,12 @@ function selectPaymentMethod(method) {
     if (method === "midtrans") {
         optMidtrans.classList.add("selected");
         optBank.classList.remove("selected");
-        previewPaymentText.innerHTML = '<i class="fa-solid fa-bolt" style="color:var(--orange)"></i> Midtrans (QRIS &amp; E-Wallet)';
-        submitButton.innerHTML = '<span>Bayar via Midtrans</span> <i class="fa-solid fa-arrow-right"></i>';
+        if (currentSubPaymentMethod) {
+            handleSubPaymentChange(currentSubPaymentMethod);
+        } else {
+            previewPaymentText.innerHTML = '<i class="fa-solid fa-bolt" style="color:var(--orange)"></i> Midtrans (Pilih Opsi)';
+            submitButton.innerHTML = '<span>Pilih Opsi Pembayaran Midtrans</span> <i class="fa-solid fa-arrow-right"></i>';
+        }
     } else {
         optMidtrans.classList.remove("selected");
         optBank.classList.add("selected");
@@ -1720,6 +1900,24 @@ checkoutForm.addEventListener("submit", async event => {
         return;
     }
 
+    if (payload.payment_method === "midtrans") {
+        const subSelect = document.getElementById("subPaymentMethodSelect");
+        const chosenSub = (subSelect && subSelect.value) ? subSelect.value : currentSubPaymentMethod;
+        if (!chosenSub) {
+            if (subSelect) {
+                subSelect.focus();
+                subSelect.style.borderColor = "#ef4444";
+            }
+            const err = document.getElementById("subPaymentError");
+            if (err) err.style.display = "block";
+            showMessage("Silakan pilih opsi pembayaran Midtrans (QRIS, E-Wallet, atau Virtual Account) terlebih dahulu.", "error");
+            submitButton.disabled = false;
+            submitButton.innerHTML = '<span>Pilih Opsi Pembayaran Midtrans</span> <i class="fa-solid fa-arrow-right"></i>';
+            return;
+        }
+        payload.sub_payment_method = chosenSub;
+    }
+
     submitButton.disabled = true;
     submitButton.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Memproses Pesanan...';
 
@@ -1739,28 +1937,43 @@ checkoutForm.addEventListener("submit", async event => {
             throw new Error(result.message || "Pesanan belum berhasil disimpan.");
         }
 
-        // Kosongkan keranjang di localStorage setelah server berhasil menyimpan
+        const isMidtrans = (payload.payment_method === "midtrans" || (result && result.payment_method === "midtrans"));
+
+        // Pengalihan otomatis untuk Midtrans
+        if (isMidtrans) {
+            // Kosongkan keranjang di localStorage karena pesanan sudah tercatat di database
+            localStorage.removeItem(CART_KEY);
+            cart = [];
+
+            submitButton.disabled = true;
+            submitButton.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Menyiapkan Pembayaran...';
+            showMessage('Pesanan #' + result.order_number + ' berhasil dibuat! Mengalihkan ke halaman pembayaran...', 'success');
+            
+            const targetUrl = result.payment_url || ('payment_pending.php?order_id=' + encodeURIComponent(result.order_number));
+            setTimeout(() => {
+                window.location.href = targetUrl;
+            }, 300);
+            return;
+        }
+
+        // Untuk Transfer Bank Manual: kosongkan keranjang dan render ringkasan
         localStorage.removeItem(CART_KEY);
         cart = [];
         renderSummary();
 
-        // Tampilkan Tampilan Berhasil yang Sangat Informatif
-        const isMidtrans = result.payment_method === "midtrans";
-        const bankAccounts = {
-            bca: { name: "BCA", norek: "7920 1829 33", an: "PT Balla Fresh Digital" },
-            mandiri: { name: "Mandiri", norek: "1520 0098 7654", an: "PT Balla Fresh Digital" },
-            bri: { name: "BRI", norek: "0341 0100 2345 530", an: "PT Balla Fresh Digital" }
-        };
+        // Tampilan untuk Transfer Bank Manual
         const currentBank = bankAccounts[result.payment_method] || bankAccounts.bca;
-
-        const waText = encodeURIComponent(
-            `Halo Tim Balla Fresh, saya ingin konfirmasi pesanan layanan:\n` +
-            `• No. Pesanan: ${result.order_number}\n` +
-            `• Nama Mitra: ${payload.name}\n` +
-            `• Usaha: ${payload.business_name}\n` +
-            `• Total: ${money(result.total_amount)}\n` +
-            `• Metode: ${result.payment_label}`
-        );
+        const midtransBoxHtml = `
+            <div style="background:#f0fdf4;border:1px solid #bbf7d0;padding:16px;border-radius:14px;margin:16px 0;">
+                <strong style="color:#166534;display:flex;align-items:center;gap:8px;font-size:14px;">
+                    <i class="fa-solid fa-building-columns"></i> Instruksi Transfer Bank ${escapeHTML(currentBank.name)}
+                </strong>
+                <p style="font-size:13px;color:#1e293b;margin-top:6px;line-height:1.6">
+                    Silakan transfer sejumlah <strong>${money(result.total_amount)}</strong> ke rekening:<br>
+                    <strong>Bank ${escapeHTML(currentBank.name)}: ${escapeHTML(currentBank.norek)}</strong> (a.n. ${escapeHTML(currentBank.an)})
+                </p>
+            </div>
+        `;
 
         messageBox.className = "message success";
         messageBox.innerHTML = `
@@ -1779,43 +1992,60 @@ checkoutForm.addEventListener("submit", async event => {
                     </div>
                 </div>
 
-                ${isMidtrans ? `
-                    <div style="background:#f0fdf4;border:1px solid #bbf7d0;padding:14px;border-radius:12px;margin:14px 0;">
-                        <strong style="color:#166534;display:flex;align-items:center;gap:6px">
-                            <i class="fa-solid fa-bolt"></i> Tagihan Midtrans Disiapkan
-                        </strong>
-                        <p style="font-size:12.5px;color:#1e293b;margin-top:4px;">
-                            Instruksi pembayaran QRIS / E-Wallet otomatis dikirimkan ke email <strong>${escapeHTML(payload.email)}</strong> dan WhatsApp Anda.
-                        </p>
-                    </div>
-                ` : `
-                    <div style="background:#f0fdf4;border:1px solid #bbf7d0;padding:14px;border-radius:12px;margin:14px 0;">
-                        <strong style="color:#166534;display:flex;align-items:center;gap:6px">
-                            <i class="fa-solid fa-building-columns"></i> Instruksi Transfer Bank ${currentBank.name}
-                        </strong>
-                        <p style="font-size:13px;color:#1e293b;margin-top:4px;">
-                            Silakan transfer sejumlah <strong>${money(result.total_amount)}</strong> ke rekening:<br>
-                            <strong>Bank ${currentBank.name}: ${currentBank.norek}</strong> (a.n. ${currentBank.an})
-                        </p>
-                    </div>
-                `}
+                ${midtransBoxHtml}
 
-                <p style="font-size:12px;color:var(--muted);margin-top:8px;">
-                    Simpan nomor pesanan ini. Anda dapat mengonfirmasi langsung kepada narahubung kami melalui WhatsApp berikut:
+                <p style="font-size:12px;color:var(--muted);margin-top:10px;">
+                    Simpan nomor pesanan ini. Anda dapat mengonfirmasi langsung kepada narahubung kami melalui WhatsApp atau melihat invoice:
                 </p>
 
-                <a href="https://wa.me/6281234567890?text=${waText}" target="_blank" rel="noopener noreferrer" class="btn-wa-confirm">
-                    <i class="fa-brands fa-whatsapp" style="font-size:18px"></i> Konfirmasi Pesanan via WhatsApp
-                </a>
-                
-                <a href="index.php" style="margin-left:12px;font-size:13px;color:var(--green);font-weight:700;text-decoration:none">
-                    Kembali ke Beranda →
-                </a>
+                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:14px;">
+                    <a href="https://wa.me/6281234567890?text=${waText}" target="_blank" rel="noopener noreferrer" class="btn-wa-confirm" style="margin-top:0">
+                        <i class="fa-brands fa-whatsapp" style="font-size:18px"></i> Konfirmasi Pesanan via WhatsApp
+                    </a>
+                    
+                    <a href="invoice.php?order=${encodeURIComponent(result.order_number)}" target="_blank" style="background:#fff;border:1px solid var(--border);color:var(--text);padding:12px 18px;border-radius:14px;font-weight:700;font-size:13px;text-decoration:none;display:inline-flex;align-items:center;gap:6px">
+                        <i class="fa-solid fa-file-invoice"></i> Lihat Invoice
+                    </a>
+
+                    <a href="index.php" style="margin-left:4px;font-size:13px;color:var(--green);font-weight:700;text-decoration:none">
+                        Kembali ke Beranda →
+                    </a>
+                </div>
             </div>
         `;
 
         checkoutForm.style.display = "none";
         messageBox.scrollIntoView({ behavior: "smooth", block: "start" });
+
+        // Jika metode Midtrans dan Snap Token tersedia, picu pop up Snap
+        if (isMidtrans && result.snap_token) {
+            const launchSnap = function() {
+                if (typeof window.snap !== "undefined") {
+                    window.snap.pay(result.snap_token, {
+                        onSuccess: function(snapRes) {
+                            window.location.href = `payment_success.php?order_id=${encodeURIComponent(result.order_number)}`;
+                        },
+                        onPending: function(snapRes) {
+                            window.location.href = `payment_pending.php?order_id=${encodeURIComponent(result.order_number)}`;
+                        },
+                        onError: function(snapRes) {
+                            window.location.href = `payment_failed.php?order_id=${encodeURIComponent(result.order_number)}`;
+                        },
+                        onClose: function() {
+                            // User menutup popup Snap tanpa menyelesaikan pembayaran
+                        }
+                    });
+                }
+            };
+
+            const btnReopen = document.getElementById("btnSnapReopen");
+            if (btnReopen) {
+                btnReopen.addEventListener("click", launchSnap);
+            }
+
+            // Luncurkan popup otomatis
+            launchSnap();
+        }
 
     } catch (error) {
         showMessage(

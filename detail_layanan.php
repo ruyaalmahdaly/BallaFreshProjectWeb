@@ -1135,10 +1135,12 @@ $estimatedDays = (int) ($service['estimated_days'] ?? 3);
         </nav>
 
         <div class="nav-actions">
+            <?php if ($isUserLoggedIn): ?>
             <a href="checkout.php" class="cart-btn" id="cartOpen" aria-label="Buka Keranjang">
                 <i class="fa-solid fa-bag-shopping"></i>
                 <span class="cart-count" id="cartCount">0</span>
             </a>
+            <?php endif; ?>
 
             <div id="authNav" class="auth-nav">
                 <?php if ($isUserLoggedIn): ?>
@@ -1397,7 +1399,14 @@ $estimatedDays = (int) ($service['estimated_days'] ?? 3);
             <div class="sticky-card">
                 <div class="price-tag-wrapper">
                     <span class="price-label">Biaya Investasi Layanan</span>
-                    <div class="price-amount"><?= $priceFormatted ?></div>
+                    <?php if ($isUserLoggedIn): ?>
+                        <div class="price-amount"><?= $priceFormatted ?></div>
+                    <?php else: ?>
+                        <div class="price-amount" style="font-size:22px;color:var(--green);display:flex;align-items:center;gap:8px">
+                            <i class="fa-solid fa-lock"></i> Harga Khusus Mitra
+                        </div>
+                        <p style="font-size:12px;color:var(--muted);margin-top:4px">Silakan masuk untuk melihat nominal investasi resmi.</p>
+                    <?php endif; ?>
                     <div class="duration-pill">
                         <i class="fa-regular fa-clock"></i>
                         <span>Estimasi Pengerjaan: <?= $estimatedDays ?> Hari Kerja</span>
@@ -1405,13 +1414,22 @@ $estimatedDays = (int) ($service['estimated_days'] ?? 3);
                 </div>
 
                 <div class="action-buttons">
-                    <button class="btn-primary-action" type="button" id="btnAddToCart">
-                        <i class="fa-solid fa-cart-plus"></i> Tambah ke Keranjang
-                    </button>
-                    <button class="btn-secondary-action" type="button" id="btnOrderDirect">
-                        <i class="fa-solid fa-bolt"></i> Pesan Langsung (Checkout)
-                    </button>
-                    <a href="https://wa.me/6281234567890?text=Halo%20Tim%20Balla%20Fresh%2C%20saya%20tertarik%20dengan%20layanan%20<?= urlencode($service['name']) ?>"
+                    <?php if ($isUserLoggedIn): ?>
+                        <button class="btn-primary-action" type="button" id="btnAddToCart">
+                            <i class="fa-solid fa-cart-plus"></i> Tambah ke Keranjang
+                        </button>
+                        <button class="btn-secondary-action" type="button" id="btnOrderDirect">
+                            <i class="fa-solid fa-bolt"></i> Pesan Langsung (Checkout)
+                        </button>
+                    <?php else: ?>
+                        <a href="login.php" class="btn-primary-action" style="text-decoration:none;display:flex;align-items:center;justify-content:center;gap:8px">
+                            <i class="fa-solid fa-arrow-right-to-bracket"></i> Login untuk Memesan Layanan
+                        </a>
+                        <a href="register.php" class="btn-secondary-action" style="text-decoration:none;display:flex;align-items:center;justify-content:center;gap:8px">
+                            <i class="fa-solid fa-user-plus"></i> Daftar Akun Mitra Baru
+                        </a>
+                    <?php endif; ?>
+                    <a href="https://wa.me/6281213725107?text=Halo%20Tim%20Balla%20Fresh%2C%20saya%20tertarik%20dengan%20layanan%20<?= urlencode($service['name']) ?>"
                        target="_blank" rel="noopener noreferrer" class="btn-wa-action">
                         <i class="fa-brands fa-whatsapp" style="font-size:17px;"></i> Konsultasi WhatsApp Tim
                     </a>
