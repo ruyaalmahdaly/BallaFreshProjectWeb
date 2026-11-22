@@ -42,3 +42,4 @@ if (is_file($targetPhp . '.php')) {
 
 // 5. Default fallback
 require __DIR__ . '/../index.php';
+
