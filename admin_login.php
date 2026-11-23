@@ -71,6 +71,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // Perbarui token keamanan.
             $_SESSION['admin_login_csrf'] = bin2hex(random_bytes(32));
 
+            // Sinkronkan cookie session sebelum redirect
+            sync_session_cookie();
+
             header('Location: admin_dashboard.php');
             exit;
         }

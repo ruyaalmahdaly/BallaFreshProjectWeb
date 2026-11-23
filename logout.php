@@ -28,6 +28,9 @@ if (ini_get('session.use_cookies')) {
 // Hancurkan session.
 session_destroy();
 
+// Hapus signed session cookie
+sync_session_cookie();
+
 // Kembali ke halaman login.
 header('Location: login.php');
 exit;

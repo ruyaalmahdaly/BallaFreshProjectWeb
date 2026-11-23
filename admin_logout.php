@@ -44,6 +44,9 @@ if (ini_get('session.use_cookies')) {
 // Hancurkan sesi.
 session_destroy();
 
+// Hapus signed session cookie
+sync_session_cookie();
+
 // Kembali ke halaman login khusus admin.
 header('Location: admin_login.php?logout=success');
 exit;

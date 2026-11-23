@@ -643,3 +643,11 @@ DROP POLICY IF EXISTS "Allow full access for service_role and authenticated" ON 
 CREATE POLICY "Allow full access for service_role and authenticated" ON public."consultation_messages" FOR ALL USING (true) WITH CHECK (true);
 
 COMMIT;
+
+-- Grant full privileges to all roles (mencegah error permission denied pada Supabase)
+GRANT ALL ON ALL TABLES IN SCHEMA public TO postgres, anon, authenticated, service_role;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO postgres, anon, authenticated, service_role;
+GRANT ALL ON ALL ROUTINES IN SCHEMA public TO postgres, anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO postgres, anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO postgres, anon, authenticated, service_role;
+

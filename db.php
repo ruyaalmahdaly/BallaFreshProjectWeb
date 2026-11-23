@@ -37,14 +37,17 @@ if (!empty($databaseUrl)) {
 
 // 2. Hubungkan ke Supabase PostgreSQL jika password / connection string tersedia
 if (!empty($pgPass) && extension_loaded('pdo_pgsql')) {
-    $hostsToTry = [
-        ['host' => $pgHost, 'port' => $pgPort, 'user' => $pgUser]
-    ];
-    if (empty($databaseUrl)) {
+    $hostsToTry = [];
+    if (!empty($databaseUrl)) {
+        $hostsToTry[] = ['host' => $pgHost, 'port' => $pgPort, 'user' => $pgUser];
         if ($pgPort === 6543) {
             $hostsToTry[] = ['host' => $pgHost, 'port' => 5432, 'user' => $pgUser];
         }
-        $hostsToTry[] = ['host' => 'db.althnabbfrwbnmeqkrrd.supabase.co', 'port' => 5432, 'user' => 'postgres'];
+    } else {
+        // Prioritaskan port 5432 (session pooler) lalu 6543 (transaction pooler)
+        $hostsToTry[] = ['host' => $pgHost, 'port' => ($pgPort === 6543 ? 5432 : $pgPort), 'user' => $pgUser];
+        $hostsToTry[] = ['host' => $pgHost, 'port' => 6543, 'user' => $pgUser];
+        $hostsToTry[] = ['host' => 'aws-0-ap-southeast-1.pooler.supabase.com', 'port' => 5432, 'user' => $pgUser];
     }
 
     foreach ($hostsToTry as $target) {
@@ -52,7 +55,8 @@ if (!empty($pgPass) && extension_loaded('pdo_pgsql')) {
             $dsn = "pgsql:host={$target['host']};port={$target['port']};dbname={$pgDb};sslmode=require";
             $pdo = new PDO($dsn, $target['user'], $pgPass, [
                 PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-                PDO::ATTR_TIMEOUT => 7
+                PDO::ATTR_TIMEOUT => 3,
+                PDO::ATTR_PERSISTENT => true
             ]);
 
             $conn = new SupabaseMysqliAdapter($pdo);

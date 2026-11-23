@@ -1,37 +1,22 @@
 <?php
+declare(strict_types=1);
 
-use PHPMailer\PHPMailer\PHPMailer;
-
-// Konfigurasi session dijalankan satu kali melalui file ini.
+// Konfigurasi session bootstrap (mendukung signed cookie multi-container di Vercel)
 require_once __DIR__ . '/session_bootstrap.php';
 
-// Koneksi database.
+// Koneksi database
 require_once __DIR__ . '/db.php';
 
-// Library email.
-require_once __DIR__ . '/vendor/autoload.php';
-
-// register.php membutuhkan kolom phone pada registration_pending.
-$phoneColumnCheck = $conn->query("SHOW COLUMNS FROM registration_pending LIKE 'phone'");
-if (!$phoneColumnCheck || $phoneColumnCheck->num_rows === 0) {
-    http_response_code(500);
-    exit("Struktur database belum lengkap. Jalankan SQL: ALTER TABLE registration_pending ADD COLUMN phone VARCHAR(24) NULL AFTER last_name;");
+// Jika pengguna sudah login, langsung ke beranda
+if (isset($_SESSION['user_id'])) {
+    header('Location: index.php');
+    exit;
 }
-$phoneColumnCheck->free();
-
-$rawConfig = file_exists(__DIR__ . '/smtp_config.php') ? require __DIR__ . '/smtp_config.php' : [];
-$config = is_array($rawConfig) ? $rawConfig : [];
-$config['host']       = getenv('SMTP_HOST') ?: ($config['host'] ?? 'smtp.gmail.com');
-$config['port']       = (int)(getenv('SMTP_PORT') ?: ($config['port'] ?? 587));
-$config['username']   = getenv('SMTP_USER') ?: ($config['username'] ?? 'ballafresh01@gmail.com');
-$config['password']   = getenv('SMTP_PASS') ?: ($config['password'] ?? '');
-$config['from_email'] = getenv('SMTP_FROM_EMAIL') ?: ($config['from_email'] ?? 'ballafresh01@gmail.com');
-$config['from_name']  = getenv('SMTP_FROM_NAME') ?: ($config['from_name'] ?? "Balla' Fresh");
 
 $error = '';
 $success = '';
-$stage = 'create';
 
+// Buat CSRF token jika belum ada
 if (empty($_SESSION['register_csrf'])) {
     $_SESSION['register_csrf'] = bin2hex(random_bytes(32));
 }
@@ -41,85 +26,41 @@ function h($value): string
     return htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8');
 }
 
-function sendOtpEmail(string $email, string $fullName, string $otp, array $config): void
-{
-    $mail = new PHPMailer(true);
-    $mail->isSMTP();
-    $mail->Host = $config['host'];
-    $mail->SMTPAuth = true;
-    $mail->Username = $config['username'];
-    $mail->Password = $config['password'];
-    $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
-    $mail->Port = (int) $config['port'];
-    $mail->CharSet = 'UTF-8';
-    $mail->Timeout = 20;
-
-    $mail->setFrom($config['from_email'], $config['from_name']);
-    $mail->addAddress($email, $fullName);
-    $mail->isHTML(true);
-    $mail->Subject = 'Kode Verifikasi Balla Fresh';
-
-    $safeName = h($fullName);
-    $safeOtp = h($otp);
-
-    $mail->Body = '
-        <div style="font-family:Arial,sans-serif;line-height:1.6">
-            <h2>Verifikasi Email Balla’ Fresh</h2>
-            <p>Halo ' . $safeName . ',</p>
-            <p>Gunakan kode berikut untuk melanjutkan pendaftaran:</p>
-            <h1 style="letter-spacing:8px">' . $safeOtp . '</h1>
-            <p>Kode berlaku selama 10 menit. Jangan bagikan kode ini kepada siapa pun.</p>
-        </div>';
-
-    $mail->AltBody = "Halo {$fullName}. Kode verifikasi Balla Fresh: {$otp}. Berlaku 10 menit.";
-    $mail->send();
-}
-
 function validCsrf(): bool
 {
     return isset($_POST['csrf'], $_SESSION['register_csrf'])
         && hash_equals($_SESSION['register_csrf'], (string) $_POST['csrf']);
 }
 
-function splitFullName(string $fullName): array
-{
-    $parts = preg_split('/\s+/', trim($fullName), 2);
-    $first = $parts[0] ?? '';
-    $last = $parts[1] ?? '';
-    return [$first, $last];
+// Reset data akun jika pengguna ingin mulai dari awal
+if (isset($_GET['stage']) && $_GET['stage'] === 'create' && isset($_GET['reset'])) {
+    unset($_SESSION['temp_register']);
+    sync_session_cookie();
+    header('Location: register.php');
+    exit;
 }
 
-$pendingId = (int) ($_SESSION['registration_pending_id'] ?? 0);
-$pending = null;
+$stage = 'create';
+$tempAccount = $_SESSION['temp_register'] ?? null;
 
-if ($pendingId > 0) {
-    $stmt = $conn->prepare(
-        'SELECT id, first_name, last_name, phone, email, otp_expires_at,
-                otp_attempts, verified_at
-         FROM registration_pending WHERE id = ? LIMIT 1'
-    );
-    $stmt->bind_param('i', $pendingId);
-    $stmt->execute();
-    $pending = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
-
-    if (!$pending) {
-        unset($_SESSION['registration_pending_id']);
-        $pendingId = 0;
-    }
+if (!empty($tempAccount) && is_array($tempAccount)) {
+    $stage = 'address';
 }
 
-if ($pending) {
-    $stage = $pending['verified_at'] ? 'address' : 'verify';
+if (isset($_GET['stage']) && $_GET['stage'] === 'create') {
+    $stage = 'create';
 }
 
+// Proses Form POST
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!validCsrf()) {
-        $error = 'Sesi formulir tidak valid. Muat ulang halaman dan coba lagi.';
+        $error = 'Sesi formulir berakhir. Muat ulang halaman dan coba lagi.';
     } else {
         $action = $_POST['action'] ?? '';
 
-        // TAHAP 1: BUAT AKUN DAN KIRIM OTP
+        // ==========================================
+        // TAHAP 1: DATA AKUN (TANPA OTP EMAIL)
+        // ==========================================
         if ($action === 'create') {
             $fullName = trim(preg_replace('/\s+/', ' ', $_POST['full_name'] ?? ''));
             $phoneInput = trim($_POST['phone'] ?? '');
@@ -128,12 +69,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $password = (string) ($_POST['password'] ?? '');
             $confirmPassword = (string) ($_POST['confirm_password'] ?? '');
 
-            [$first, $last] = splitFullName($fullName);
-
-            if ($fullName === '' || strlen($first) > 100 || strlen($last) > 100 || strlen($fullName) > 201) {
-                $error = 'Masukkan nama lengkap yang valid (maksimal 201 karakter).';
+            if ($fullName === '' || strlen($fullName) > 200) {
+                $error = 'Masukkan nama lengkap yang valid (maksimal 200 karakter).';
             } elseif (!preg_match('/^\+?[0-9]{8,18}$/', $phone)) {
-                $error = 'Masukkan nomor telepon yang valid.';
+                $error = 'Masukkan nomor telepon yang valid (8-18 digit).';
             } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL) || strlen($email) > 150) {
                 $error = 'Format email tidak valid.';
             } elseif (strlen($password) < 8) {
@@ -141,6 +80,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             } elseif ($password !== $confirmPassword) {
                 $error = 'Password dan konfirmasi password tidak sama.';
             } else {
+                // Periksa apakah email sudah terdaftar di users
                 $stmt = $conn->prepare('SELECT id FROM users WHERE email = ? LIMIT 1');
                 $stmt->bind_param('s', $email);
                 $stmt->execute();
@@ -148,226 +88,109 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $stmt->close();
 
                 if ($exists) {
-                    $error = 'Email sudah terdaftar. Silakan login.';
+                    $error = 'Email sudah terdaftar. Silakan gunakan menu Login.';
                 } else {
-                    $stmt = $conn->prepare('DELETE FROM registration_pending WHERE email = ?');
-                    $stmt->bind_param('s', $email);
-                    $stmt->execute();
-                    $stmt->close();
+                    // Simpan data akun sementara ke session (langsung ke tahap alamat tanpa OTP)
+                    $_SESSION['temp_register'] = [
+                        'name'     => $fullName,
+                        'phone'    => $phone,
+                        'email'    => $email,
+                        'password' => password_hash($password, PASSWORD_DEFAULT),
+                    ];
+                    $_SESSION['register_csrf'] = bin2hex(random_bytes(32));
 
-                    $hash = password_hash($password, PASSWORD_DEFAULT);
-                    $otp = (string) random_int(100000, 999999);
-                    $otpHash = password_hash($otp, PASSWORD_DEFAULT);
-                    $expires = date('Y-m-d H:i:s', time() + 600);
+                    sync_session_cookie();
 
-                    $stmt = $conn->prepare(
-                        'INSERT INTO registration_pending
-                         (first_name, last_name, phone, email, password,
-                          otp_hash, otp_expires_at, otp_attempts)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, 0)'
-                    );
-                    $stmt->bind_param(
-                        'sssssss',
-                        $first,
-                        $last,
-                        $phone,
-                        $email,
-                        $hash,
-                        $otpHash,
-                        $expires
-                    );
-
-                    if ($stmt->execute()) {
-                        $newId = $stmt->insert_id;
-                        $stmt->close();
-
-                        try {
-                            sendOtpEmail($email, $fullName, $otp, $config);
-                            // Simpan ID pendaftaran ke session sebelum redirect.
-                            // Jangan hapus session lama pada titik ini agar browser tidak
-                            // kehilangan referensi session ketika berpindah ke halaman OTP.
-                            $_SESSION['registration_pending_id'] = (int) $newId;
-                            $_SESSION['register_csrf'] = bin2hex(random_bytes(32));
-
-                            // Pastikan data session benar-benar ditulis sebelum redirect.
-                            session_write_close();
-
-                            header('Location: register.php', true, 303);
-                            exit;
-                        } catch (Throwable $e) {
-                            error_log('Pengiriman OTP gagal: ' . $e->getMessage());
-                            $stmt = $conn->prepare('DELETE FROM registration_pending WHERE id = ?');
-                            $stmt->bind_param('i', $newId);
-                            $stmt->execute();
-                            $stmt->close();
-                            $error = 'Email OTP gagal dikirim. Periksa konfigurasi email lalu coba lagi.';
-                        }
-                    } else {
-                        $stmt->close();
-                        $error = 'Pendaftaran gagal. Silakan coba lagi.';
-                    }
-                }
-            }
-        }
-
-        // TAHAP 2: VERIFIKASI ATAU KIRIM ULANG OTP
-        elseif ($action === 'verify' || $action === 'resend') {
-            $id = (int) ($_SESSION['registration_pending_id'] ?? 0);
-
-            if ($id < 1) {
-                $error = 'Sesi pendaftaran berakhir. Silakan daftar kembali.';
-            } else {
-                $stmt = $conn->prepare('SELECT * FROM registration_pending WHERE id = ? LIMIT 1');
-                $stmt->bind_param('i', $id);
-                $stmt->execute();
-                $p = $stmt->get_result()->fetch_assoc();
-                $stmt->close();
-
-                if (!$p) {
-                    $error = 'Data pendaftaran tidak ditemukan.';
-                } elseif ($p['verified_at']) {
-                    header('Location: register.php');
+                    header('Location: register.php?stage=address');
                     exit;
-                } elseif ((int) $p['otp_attempts'] >= 5) {
-                    $error = 'Batas percobaan OTP tercapai. Silakan mulai pendaftaran kembali.';
-                } elseif ($action === 'resend') {
-                    $otp = (string) random_int(100000, 999999);
-                    $otpHash = password_hash($otp, PASSWORD_DEFAULT);
-                    $expires = date('Y-m-d H:i:s', time() + 600);
-
-                    $stmt = $conn->prepare(
-                        'UPDATE registration_pending
-                         SET otp_hash = ?, otp_expires_at = ?, otp_attempts = 0
-                         WHERE id = ? AND verified_at IS NULL'
-                    );
-                    $stmt->bind_param('ssi', $otpHash, $expires, $id);
-                    $stmt->execute();
-                    $stmt->close();
-
-                    try {
-                        $fullName = trim($p['first_name'] . ' ' . $p['last_name']);
-                        sendOtpEmail($p['email'], $fullName, $otp, $config);
-                        $success = 'Kode OTP baru sudah dikirim.';
-                    } catch (Throwable $e) {
-                        error_log('Kirim ulang OTP gagal: ' . $e->getMessage());
-                        $error = 'OTP gagal dikirim. Coba lagi nanti.';
-                    }
-                } else {
-                    $otp = trim($_POST['otp'] ?? '');
-
-                    if (!preg_match('/^\d{6}$/', $otp)) {
-                        $error = 'Masukkan OTP enam digit.';
-                    } elseif (empty($p['otp_expires_at']) || strtotime($p['otp_expires_at']) < time()) {
-                        $error = 'OTP sudah kedaluwarsa. Minta kode baru.';
-                    } elseif (!password_verify($otp, $p['otp_hash'])) {
-                        $stmt = $conn->prepare(
-                            'UPDATE registration_pending
-                             SET otp_attempts = otp_attempts + 1 WHERE id = ?'
-                        );
-                        $stmt->bind_param('i', $id);
-                        $stmt->execute();
-                        $stmt->close();
-                        $error = 'Kode OTP salah.';
-                    } else {
-                        $stmt = $conn->prepare(
-                            'UPDATE registration_pending SET verified_at = NOW() WHERE id = ?'
-                        );
-                        $stmt->bind_param('i', $id);
-                        $stmt->execute();
-                        $stmt->close();
-                        header('Location: register.php');
-                        exit;
-                    }
                 }
             }
         }
 
-        // TAHAP 3: SIMPAN ALAMAT DAN AKTIFKAN AKUN
+        // ==========================================
+        // TAHAP 2: SIMPAN ALAMAT & SELESAIKAN PENDAFTARAN
+        // ==========================================
         elseif ($action === 'save_address') {
-            $id = (int) ($_SESSION['registration_pending_id'] ?? 0);
-            $city = trim($_POST['city'] ?? '');
-            $details = trim($_POST['address_details'] ?? '');
-            $subdistrict = trim($_POST['subdistrict'] ?? '');
-            $rtRw = trim($_POST['rt_rw'] ?? '');
-            $postal = trim($_POST['postal_code'] ?? '');
+            $temp = $_SESSION['temp_register'] ?? null;
 
-            $stmt = $conn->prepare(
-                'SELECT * FROM registration_pending
-                 WHERE id = ? AND verified_at IS NOT NULL LIMIT 1'
-            );
-            $stmt->bind_param('i', $id);
-            $stmt->execute();
-            $p = $stmt->get_result()->fetch_assoc();
-            $stmt->close();
-
-            if (!$p) {
-                $error = 'Verifikasi email diperlukan sebelum mengisi alamat.';
-            } elseif (
-                $city === '' || strlen($city) > 100 ||
-                $details === '' || strlen($details) > 255 ||
-                $subdistrict === '' || strlen($subdistrict) > 100 ||
-                strlen($rtRw) > 30 ||
-                !preg_match('/^\d{5,10}$/', $postal)
-            ) {
-                $error = 'Periksa kembali semua kolom alamat dan kode pos.';
+            if (empty($temp) || !is_array($temp)) {
+                $error = 'Data pendaftaran tidak ditemukan. Silakan lengkapi formulir akun terlebih dahulu.';
+                $stage = 'create';
             } else {
-                $name = trim($p['first_name'] . ' ' . $p['last_name']);
+                $city = trim($_POST['city'] ?? '');
+                $details = trim($_POST['address_details'] ?? '');
+                $subdistrict = trim($_POST['subdistrict'] ?? '');
+                $rtRw = trim($_POST['rt_rw'] ?? '');
+                $postal = trim($_POST['postal_code'] ?? '');
 
-                try {
-                    $conn->begin_transaction();
+                if ($city === '' || strlen($city) > 100) {
+                    $error = 'Masukkan nama kota/kabupaten yang valid.';
+                } elseif ($details === '' || strlen($details) > 255) {
+                    $error = 'Masukkan detail alamat yang valid (maksimal 255 karakter).';
+                } elseif ($subdistrict === '' || strlen($subdistrict) > 100) {
+                    $error = 'Masukkan nama kecamatan yang valid.';
+                } elseif (strlen($rtRw) > 30) {
+                    $error = 'Kolom RT/RW maksimal 30 karakter.';
+                } elseif (!preg_match('/^\d{5,10}$/', $postal)) {
+                    $error = 'Kode pos harus berupa 5-10 digit angka.';
+                } else {
+                    try {
+                        if (method_exists($conn, 'begin_transaction')) {
+                            $conn->begin_transaction();
+                        }
 
-                    $stmt = $conn->prepare(
-                        'INSERT INTO users (name, phone, email, password)
-                         VALUES (?, ?, ?, ?)'
-                    );
-                    $stmt->bind_param('ssss', $name, $p['phone'], $p['email'], $p['password']);
-                    $stmt->execute();
-                    $userId = $stmt->insert_id;
-                    $stmt->close();
+                        // 1. Simpan Pengguna Baru
+                        $stmt = $conn->prepare(
+                            'INSERT INTO users (name, phone, email, password) VALUES (?, ?, ?, ?)'
+                        );
+                        $stmt->bind_param('ssss', $temp['name'], $temp['phone'], $temp['email'], $temp['password']);
+                        $stmt->execute();
+                        $userId = (int) $conn->insert_id;
+                        $stmt->close();
 
-                    $stmt = $conn->prepare(
-                        'INSERT INTO user_addresses
-                         (user_id, city, address_details, subdistrict, rt_rw, postal_code)
-                         VALUES (?, ?, ?, ?, ?, ?)'
-                    );
-                    $stmt->bind_param('isssss', $userId, $city, $details, $subdistrict, $rtRw, $postal);
-                    $stmt->execute();
-                    $stmt->close();
+                        // 2. Simpan Alamat Pengguna
+                        $stmt = $conn->prepare(
+                            'INSERT INTO user_addresses (user_id, city, address_details, subdistrict, rt_rw, postal_code)
+                             VALUES (?, ?, ?, ?, ?, ?)'
+                        );
+                        $stmt->bind_param('isssss', $userId, $city, $details, $subdistrict, $rtRw, $postal);
+                        $stmt->execute();
+                        $stmt->close();
 
-                    $stmt = $conn->prepare('DELETE FROM registration_pending WHERE id = ?');
-                    $stmt->bind_param('i', $id);
-                    $stmt->execute();
-                    $stmt->close();
+                        if (method_exists($conn, 'commit')) {
+                            $conn->commit();
+                        }
 
-                    $conn->commit();
+                        // 3. Bersihkan data sementara & langsung aktifkan status login
+                        unset($_SESSION['temp_register']);
+                        $_SESSION['user_id'] = $userId;
+                        $_SESSION['user_name'] = $temp['name'];
+                        $_SESSION['user_email'] = $temp['email'];
 
-                    session_regenerate_id(true);
-                    $_SESSION['user_id'] = $userId;
-                    $_SESSION['user_name'] = $name;
-                    unset($_SESSION['registration_pending_id']);
-                    header('Location: index.php');
-                    exit;
-                } catch (Throwable $e) {
-                    $conn->rollback();
-                    error_log('Penyimpanan akun gagal: ' . $e->getMessage());
-                    $error = 'Akun belum dapat disimpan. Periksa data dan coba lagi.';
+                        // Sinkronkan cookie session sebelum redirect
+                        sync_session_cookie();
+
+                        // Arahkan langsung ke halaman beranda
+                        header('Location: index.php');
+                        exit;
+
+                    } catch (Throwable $e) {
+                        if (method_exists($conn, 'rollback')) {
+                            $conn->rollback();
+                        }
+                        error_log('Penyimpanan pendaftaran gagal: ' . $e->getMessage());
+                        $error = 'Gagal menyimpan pendaftaran: ' . $e->getMessage();
+                    }
                 }
             }
         }
     }
 }
 
-if ($pending) {
-    $stage = $pending['verified_at'] ? 'address' : 'verify';
-}
-
-$fullNameValue = $_POST['full_name'] ?? '';
-$emailValue = $_POST['email'] ?? '';
-$phoneValue = $_POST['phone'] ?? '';
-
-if ($fullNameValue === '' && isset($_POST['first_name'])) {
-    $fullNameValue = trim(($_POST['first_name'] ?? '') . ' ' . ($_POST['last_name'] ?? ''));
-}
+// Persiapkan nilai default untuk form
+$fullNameValue = $_POST['full_name'] ?? ($tempAccount['name'] ?? '');
+$emailValue = $_POST['email'] ?? ($tempAccount['email'] ?? '');
+$phoneValue = $_POST['phone'] ?? ($tempAccount['phone'] ?? '');
 ?>
 <!doctype html>
 <html lang="id">
@@ -384,10 +207,10 @@ if ($fullNameValue === '' && isset($_POST['first_name'])) {
         <a class="auth-brand" href="index.php">Balla’<span>Fresh</span></a>
 
         <?php if ($stage === 'create'): ?>
-            <span class="auth-eyebrow">TAHAP 1 DARI 3</span>
+            <span class="auth-eyebrow">TAHAP 1 DARI 2: DATA AKUN</span>
             <h1>Create Account</h1>
             <p class="auth-description">
-                Buat akun Balla’ Fresh untuk melanjutkan.
+                Lengkapi profil usaha hidroponik Anda untuk mendaftar akun.
             </p>
 
             <?php if ($error): ?>
@@ -401,13 +224,13 @@ if ($fullNameValue === '' && isset($_POST['first_name'])) {
                 <div class="auth-field">
                     <label for="full_name">Nama Lengkap</label>
                     <input id="full_name" type="text" name="full_name" required
-                           maxlength="201" autocomplete="name"
+                           maxlength="200" autocomplete="name"
                            value="<?= h($fullNameValue) ?>"
                            placeholder="Masukkan nama lengkap">
                 </div>
 
                 <div class="auth-field">
-                    <label for="phone">Nomor Telepon</label>
+                    <label for="phone">Nomor Telepon / WhatsApp</label>
                     <input id="phone" type="tel" name="phone" required
                            maxlength="24" autocomplete="tel"
                            value="<?= h($phoneValue) ?>"
@@ -415,7 +238,7 @@ if ($fullNameValue === '' && isset($_POST['first_name'])) {
                 </div>
 
                 <div class="auth-field">
-                    <label for="email">Email</label>
+                    <label for="email">Alamat Email</label>
                     <input id="email" type="email" name="email" required
                            autocomplete="email" maxlength="150"
                            value="<?= h($emailValue) ?>"
@@ -426,8 +249,8 @@ if ($fullNameValue === '' && isset($_POST['first_name'])) {
                     <label for="password">Password</label>
                     <div class="password-wrapper">
                         <input id="password" type="password" name="password" required
-                               minlength="8" autocomplete="new-password"
-                               placeholder="Minimal 8 karakter">
+                                minlength="8" autocomplete="new-password"
+                                placeholder="Minimal 8 karakter">
                         <button type="button" class="toggle-password"
                                 data-target="password" aria-label="Lihat password">
                             <i class="fa-regular fa-eye-slash"></i>
@@ -451,82 +274,65 @@ if ($fullNameValue === '' && isset($_POST['first_name'])) {
                     <small id="passwordMessage" aria-live="polite"></small>
                 </div>
 
-                <button class="auth-button" type="submit">Next →</button>
+                <button class="auth-button" type="submit">Lanjut ke Alamat →</button>
             </form>
 
             <p class="auth-switch">
                 Sudah punya akun? <a href="login.php">Login</a>
             </p>
 
-        <?php elseif ($stage === 'verify'): ?>
-            <span class="auth-eyebrow">TAHAP 2 DARI 3</span>
-            <h1>Account Verification</h1>
-            <p class="auth-description">
-                Kode OTP enam digit telah dikirim ke
-                <strong><?= h($pending['email']) ?></strong>.
-                Periksa juga folder Spam.
-            </p>
-
-            <?php if ($error): ?><div class="auth-notice"><?= h($error) ?></div><?php endif; ?>
-            <?php if ($success): ?><div class="auth-notice"><?= h($success) ?></div><?php endif; ?>
-
-            <form class="auth-form" method="post">
-                <input type="hidden" name="csrf" value="<?= h($_SESSION['register_csrf']) ?>">
-                <input type="hidden" name="action" value="verify">
-                <div class="auth-field">
-                    <label for="otp">Kode OTP</label>
-                    <input id="otp" name="otp" inputmode="numeric"
-                           pattern="[0-9]{6}" maxlength="6" required
-                           autocomplete="one-time-code" placeholder="Masukkan 6 digit">
-                </div>
-                <button class="auth-button" type="submit">Verifikasi →</button>
-            </form>
-
-            <form method="post" class="auth-form">
-                <input type="hidden" name="csrf" value="<?= h($_SESSION['register_csrf']) ?>">
-                <input type="hidden" name="action" value="resend">
-                <button class="auth-button" type="submit">Kirim ulang OTP</button>
-            </form>
-
         <?php else: ?>
-            <span class="auth-eyebrow">TAHAP 3 DARI 3</span>
+            <span class="auth-eyebrow">TAHAP 2 DARI 2: LENGKAPI ALAMAT</span>
             <h1>Set Your Address</h1>
             <p class="auth-description">
-                Email terverifikasi. Lengkapi alamat untuk menyelesaikan pendaftaran.
+                Halo <strong><?= h($tempAccount['name'] ?? 'Mitra') ?></strong>, lengkapi alamat kebun atau usaha Anda untuk menyelesaikan pendaftaran.
             </p>
 
-            <?php if ($error): ?><div class="auth-notice"><?= h($error) ?></div><?php endif; ?>
+            <?php if ($error): ?>
+                <div class="auth-notice"><?= h($error) ?></div>
+            <?php endif; ?>
 
             <form class="auth-form" method="post">
                 <input type="hidden" name="csrf" value="<?= h($_SESSION['register_csrf']) ?>">
                 <input type="hidden" name="action" value="save_address">
 
                 <div class="auth-field">
-                    <label for="city">Kota/Kabupaten</label>
+                    <label for="city">Kota / Kabupaten</label>
                     <input id="city" name="city" required maxlength="100"
                            autocomplete="address-level2" placeholder="Contoh: Makassar">
                 </div>
+
                 <div class="auth-field">
-                    <label for="address_details">Detail alamat</label>
+                    <label for="address_details">Detail Alamat Lengkap</label>
                     <textarea id="address_details" name="address_details"
                               required maxlength="255" autocomplete="street-address"
-                              placeholder="Nama jalan, nomor rumah, dan kelurahan"></textarea>
+                              placeholder="Nama jalan, nomor rumah/kebun, dan kelurahan" rows="3"></textarea>
                 </div>
+
                 <div class="auth-field">
                     <label for="subdistrict">Kecamatan</label>
-                    <input id="subdistrict" name="subdistrict" required maxlength="100">
+                    <input id="subdistrict" name="subdistrict" required maxlength="100"
+                           placeholder="Contoh: Panakkukang">
                 </div>
+
                 <div class="auth-field">
-                    <label for="rt_rw">RT/RW (opsional)</label>
+                    <label for="rt_rw">RT / RW (Opsional)</label>
                     <input id="rt_rw" name="rt_rw" maxlength="30" placeholder="Contoh: 001/002">
                 </div>
+
                 <div class="auth-field">
-                    <label for="postal_code">Kode pos</label>
+                    <label for="postal_code">Kode Pos</label>
                     <input id="postal_code" name="postal_code" required
-                           inputmode="numeric" pattern="[0-9]{5,10}" maxlength="10">
+                           inputmode="numeric" pattern="[0-9]{5,10}" maxlength="10"
+                           placeholder="Contoh: 90231">
                 </div>
-                <button class="auth-button" type="submit">Selesaikan Pendaftaran →</button>
+
+                <button class="auth-button" type="submit">Selesaikan Pendaftaran & Masuk →</button>
             </form>
+
+            <p class="auth-switch">
+                <a href="register.php?stage=create&reset=1">← Ubah data akun</a>
+            </p>
         <?php endif; ?>
     </section>
 
@@ -535,7 +341,7 @@ if ($fullNameValue === '' && isset($_POST['first_name'])) {
             <div class="leaf-icon">🌿</div>
             <span class="welcome-label">WELCOME TO BALLA’ FRESH</span>
             <h2>Mulai perjalanan yang lebih fresh.</h2>
-            <p>Satu akun untuk terhubung dengan layanan Balla’ Fresh.</p>
+            <p>Satu akun untuk terhubung dengan layanan digitalisasi Balla’ Fresh.</p>
             <div class="visual-note">Fresh solutions, better business.</div>
         </div>
     </aside>
@@ -556,7 +362,6 @@ document.querySelectorAll('.toggle-password').forEach(function(button) {
 });
 
 const registerForm = document.getElementById('registerForm');
-
 if (registerForm) {
     registerForm.addEventListener('submit', function(event) {
         const password = document.getElementById('password').value;

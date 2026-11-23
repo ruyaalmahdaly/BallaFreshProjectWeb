@@ -74,9 +74,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // Simpan identitas pengguna.
             $_SESSION['user_id'] = (int) $account['id'];
             $_SESSION['user_name'] = $account['name'];
+            $_SESSION['user_email'] = $account['email'];
 
             // Perbarui token CSRF.
             $_SESSION['login_csrf'] = bin2hex(random_bytes(32));
+
+            // Sinkronkan ke cookie terenkripsi agar sesi tidak hilang di serverless
+            sync_session_cookie();
 
             // Masuk ke halaman utama.
             header('Location: index.php');
