@@ -1,6 +1,27 @@
 <?php
 declare(strict_types=1);
 
+// Mulai output buffering agar pesan PHP apapun tidak mengotori output JSON
+if (ob_get_level() === 0) {
+    ob_start();
+}
+
+// Exception handler khusus untuk endpoint POST JSON
+if (($_SERVER["REQUEST_METHOD"] ?? '') === "POST") {
+    set_exception_handler(function(Throwable $e) {
+        while (ob_get_level() > 0) {
+            ob_end_clean();
+        }
+        http_response_code(500);
+        header("Content-Type: application/json; charset=utf-8");
+        echo json_encode([
+            "success" => false,
+            "message" => "Kesalahan server: " . $e->getMessage()
+        ], JSON_UNESCAPED_UNICODE);
+        exit;
+    });
+}
+
 require_once __DIR__ . "/session_bootstrap.php";
 require_once __DIR__ . "/db.php";
 if (file_exists(__DIR__ . "/midtrans_config.php")) {
@@ -9,6 +30,9 @@ if (file_exists(__DIR__ . "/midtrans_config.php")) {
 
 function sendJson($data, $status = 200)
 {
+    while (ob_get_level() > 0) {
+        ob_end_clean();
+    }
     http_response_code($status);
     header("Content-Type: application/json; charset=utf-8");
     echo json_encode($data, JSON_UNESCAPED_UNICODE);
@@ -345,6 +369,10 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
                 (order_number, customer_id, total_amount, status, notes, payment_method, payment_type, payment_code, biller_code, qr_url, qr_string, deeplink_url, expiry_time, midtrans_transaction_id, gross_amount, transaction_status, payment_status, business_name, social_media, website_url, user_id, midtrans_response)
             VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'menunggu_pembayaran', ?, ?, ?, ?, ?)
         ");
+        if (!$orderStmt) {
+            throw new Exception("Gagal menyiapkan data pesanan: " . ($conn->error ?? 'Database error'));
+        }
+
         $orderStmt->bind_param(
             "sidssssssssssdssssis",
             $orderNumber,
@@ -368,9 +396,24 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
             $userId,
             $midtransRaw
         );
-        $orderStmt->execute();
+        $orderOk = $orderStmt->execute();
+        if (!$orderOk) {
+            throw new Exception("Gagal menyimpan pesanan: " . ($orderStmt->error ?: 'Gagal eksekusi query'));
+        }
         $orderId = (int) $conn->insert_id;
         $orderStmt->close();
+
+        // Jaminan kepastian orderId untuk database PostgreSQL
+        if ($orderId <= 0) {
+            $chkOrd = $conn->prepare("SELECT id FROM orders WHERE order_number = ? LIMIT 1");
+            if ($chkOrd) {
+                $chkOrd->bind_param("s", $orderNumber);
+                $chkOrd->execute();
+                $ordRow = $chkOrd->get_result()->fetch_assoc();
+                $orderId = (int)($ordRow["id"] ?? 0);
+                $chkOrd->close();
+            }
+        }
 
         // 6. Simpan rincian layanan ke order_items
         $itemStmt = $conn->prepare("
@@ -378,6 +421,9 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
                 (order_id, service_id, service_name, quantity, unit_price, subtotal)
             VALUES (?, ?, ?, ?, ?, ?)
         ");
+        if (!$itemStmt) {
+            throw new Exception("Gagal menyiapkan data rincian pesanan.");
+        }
 
         foreach ($orderItemsData as $it) {
             $itemStmt->bind_param(
@@ -389,7 +435,10 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
                 $it["unit_price"],
                 $it["subtotal"]
             );
-            $itemStmt->execute();
+            $itemOk = $itemStmt->execute();
+            if (!$itemOk) {
+                error_log("Order item insert warning: " . $itemStmt->error);
+            }
         }
         $itemStmt->close();
 
@@ -442,7 +491,12 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
         ]);
 
     } catch (Throwable $e) {
-        $conn->rollback();
+        try {
+            if ($conn && method_exists($conn, 'rollback')) {
+                $conn->rollback();
+            }
+        } catch (Throwable $rbErr) {}
+
         error_log("Checkout BallaFresh: " . $e->getMessage());
 
         sendJson([
@@ -450,7 +504,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
             "message" => in_array($e->getMessage(), [
                 "Salah satu layanan sudah tidak tersedia. Muat ulang katalog dan coba lagi.",
                 "Harga layanan tidak valid."
-            ], true) ? $e->getMessage() : "Pesanan gagal disimpan. Silakan coba lagi."
+            ], true) ? $e->getMessage() : ("Pesanan belum berhasil disimpan: " . $e->getMessage())
         ], 500);
     }
 }
@@ -2010,10 +2064,20 @@ checkoutForm.addEventListener("submit", async event => {
             body: JSON.stringify(payload)
         });
 
-        const result = await response.json();
+        const rawText = await response.text();
+        let result = null;
+        try {
+            result = JSON.parse(rawText);
+        } catch (jsonErr) {
+            // Bersihkan format tag HTML jika server mengirim output warning/error
+            const tmpDiv = document.createElement("div");
+            tmpDiv.innerHTML = rawText;
+            const stripped = (tmpDiv.textContent || tmpDiv.innerText || rawText).replace(/\s+/g, " ").trim();
+            throw new Error(stripped || "Terjadi kesalahan server saat memproses pesanan.");
+        }
 
-        if (!response.ok || !result.success) {
-            throw new Error(result.message || "Pesanan belum berhasil disimpan.");
+        if (!response.ok || !result || !result.success) {
+            throw new Error(result?.message || "Pesanan belum berhasil disimpan.");
         }
 
         const isMidtrans = (payload.payment_method === "midtrans" || (result && result.payment_method === "midtrans"));

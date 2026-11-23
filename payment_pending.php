@@ -41,7 +41,7 @@ if (!$order) {
 }
 
 // 2. Helper Sinkronisasi Status Pembayaran ke Database
-function applySettlementSuccess(mysqli $conn, array &$order, array $stData, string $transId, string $payType, string $settleTime, string $midStatus): void {
+function applySettlementSuccess($conn, array &$order, array $stData, string $transId, string $payType, string $settleTime, string $midStatus): void {
     $orderIdInt = (int)$order["id"];
 
     $upd = $conn->prepare("

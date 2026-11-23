@@ -64,11 +64,17 @@ class SupabaseMysqliStmtAdapter {
     public int $errno = 0;
     private ?array $lastResultRows = null;
     private int $resultCursor = 0;
+    private bool $isInsert = false;
+    private string $tableName = '';
 
-    public function __construct(PDO $pdo, PDOStatement $stmt, ?SupabaseMysqliAdapter $adapter = null) {
+    public function __construct(PDO $pdo, PDOStatement $stmt, ?SupabaseMysqliAdapter $adapter = null, string $sql = '') {
         $this->pdo = $pdo;
         $this->stmt = $stmt;
         $this->adapter = $adapter;
+        if (preg_match('/^\s*INSERT\s+INTO\s+["`]?([a-zA-Z0-9_]+)["`]?/i', $sql, $m)) {
+            $this->isInsert = true;
+            $this->tableName = strtolower($m[1]);
+        }
     }
 
     public function bind_param(string $types, &...$args): bool {
@@ -76,6 +82,7 @@ class SupabaseMysqliStmtAdapter {
         foreach ($args as $i => &$arg) {
             $this->boundParams[$i] = &$arg;
         }
+        unset($arg);
         return true;
     }
 
@@ -94,15 +101,46 @@ class SupabaseMysqliStmtAdapter {
             $this->affected_rows = $this->stmt->rowCount();
 
             // Coba ambil lastval / insert_id jika query berupa INSERT
-            try {
-                $lastId = (int)$this->pdo->lastInsertId();
+            if ($this->isInsert) {
+                $lastId = 0;
+                // 1. Coba lastInsertId standar
+                try {
+                    $lid = (int)$this->pdo->lastInsertId();
+                    if ($lid > 0) {
+                        $lastId = $lid;
+                    }
+                } catch (Throwable $e) {}
+
+                // 2. Jika belum berhasil dan nama tabel terdeteksi, coba dengan sequence tabel_{id}_seq
+                if ($lastId <= 0 && $this->tableName !== '') {
+                    try {
+                        $lid = (int)$this->pdo->lastInsertId($this->tableName . '_id_seq');
+                        if ($lid > 0) {
+                            $lastId = $lid;
+                        }
+                    } catch (Throwable $e) {}
+                }
+
+                // 3. Fallback coba SELECT LASTVAL() dari sesi PostgreSQL saat ini
+                if ($lastId <= 0) {
+                    try {
+                        $lvStmt = $this->pdo->query("SELECT LASTVAL()");
+                        if ($lvStmt) {
+                            $lid = (int)$lvStmt->fetchColumn();
+                            if ($lid > 0) {
+                                $lastId = $lid;
+                            }
+                        }
+                    } catch (Throwable $e) {}
+                }
+
                 if ($lastId > 0) {
                     $this->insert_id = $lastId;
                     if ($this->adapter !== null) {
                         $this->adapter->insert_id = $lastId;
                     }
                 }
-            } catch (Throwable $e) {}
+            }
 
             return $success;
         } catch (PDOException $e) {
@@ -214,7 +252,7 @@ class SupabaseMysqliAdapter {
         try {
             $translated = $this->translateSql($sql);
             $stmt = $this->pdo->prepare($translated);
-            return new SupabaseMysqliStmtAdapter($this->pdo, $stmt, $this);
+            return new SupabaseMysqliStmtAdapter($this->pdo, $stmt, $this, $translated);
         } catch (PDOException $e) {
             $this->error = $e->getMessage();
             $this->errno = (int)$e->getCode();
@@ -256,15 +294,39 @@ class SupabaseMysqliAdapter {
     }
 
     public function begin_transaction(): bool {
-        return $this->pdo->beginTransaction();
+        try {
+            if ($this->pdo->inTransaction()) {
+                return true;
+            }
+            return $this->pdo->beginTransaction();
+        } catch (Throwable $e) {
+            error_log("Supabase begin_transaction error: " . $e->getMessage());
+            return false;
+        }
     }
 
     public function commit(): bool {
-        return $this->pdo->commit();
+        try {
+            if ($this->pdo->inTransaction()) {
+                return $this->pdo->commit();
+            }
+            return true;
+        } catch (Throwable $e) {
+            error_log("Supabase commit error: " . $e->getMessage());
+            return false;
+        }
     }
 
     public function rollback(): bool {
-        return $this->pdo->rollBack();
+        try {
+            if ($this->pdo->inTransaction()) {
+                return $this->pdo->rollBack();
+            }
+            return true;
+        } catch (Throwable $e) {
+            error_log("Supabase rollback error: " . $e->getMessage());
+            return false;
+        }
     }
 
     public function close(): bool {

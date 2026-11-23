@@ -55,9 +55,35 @@ if (!empty($pgPass) && extension_loaded('pdo_pgsql')) {
             $dsn = "pgsql:host={$target['host']};port={$target['port']};dbname={$pgDb};sslmode=require";
             $pdo = new PDO($dsn, $target['user'], $pgPass, [
                 PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-                PDO::ATTR_TIMEOUT => 3,
-                PDO::ATTR_PERSISTENT => true
+                PDO::ATTR_TIMEOUT => 4,
+                PDO::ATTR_EMULATE_PREPARES => true
             ]);
+
+            // Sinkronisasi kolom opsional jika belum ada pada database Supabase
+            try {
+                $pdo->exec('
+                    ALTER TABLE public."orders" ADD COLUMN IF NOT EXISTS "business_name" VARCHAR(150);
+                    ALTER TABLE public."orders" ADD COLUMN IF NOT EXISTS "social_media" VARCHAR(255);
+                    ALTER TABLE public."orders" ADD COLUMN IF NOT EXISTS "website_url" VARCHAR(255);
+                    ALTER TABLE public."orders" ADD COLUMN IF NOT EXISTS "user_id" INT;
+                    ALTER TABLE public."orders" ADD COLUMN IF NOT EXISTS "payment_type" VARCHAR(50);
+                    ALTER TABLE public."orders" ADD COLUMN IF NOT EXISTS "payment_code" VARCHAR(100);
+                    ALTER TABLE public."orders" ADD COLUMN IF NOT EXISTS "biller_code" VARCHAR(50);
+                    ALTER TABLE public."orders" ADD COLUMN IF NOT EXISTS "qr_url" TEXT;
+                    ALTER TABLE public."orders" ADD COLUMN IF NOT EXISTS "qr_string" TEXT;
+                    ALTER TABLE public."orders" ADD COLUMN IF NOT EXISTS "deeplink_url" TEXT;
+                    ALTER TABLE public."orders" ADD COLUMN IF NOT EXISTS "gross_amount" NUMERIC(12,2);
+                    ALTER TABLE public."orders" ADD COLUMN IF NOT EXISTS "transaction_status" VARCHAR(50);
+                    ALTER TABLE public."orders" ADD COLUMN IF NOT EXISTS "payment_status" VARCHAR(50) DEFAULT \'menunggu_pembayaran\';
+                    ALTER TABLE public."orders" ADD COLUMN IF NOT EXISTS "expiry_time" TIMESTAMPTZ;
+                    ALTER TABLE public."orders" ADD COLUMN IF NOT EXISTS "midtrans_transaction_id" VARCHAR(100);
+                    ALTER TABLE public."orders" ADD COLUMN IF NOT EXISTS "midtrans_response" TEXT;
+                    ALTER TABLE public."users" ADD COLUMN IF NOT EXISTS "business_name" VARCHAR(150);
+                    ALTER TABLE public."users" ADD COLUMN IF NOT EXISTS "social_media" VARCHAR(255);
+                    ALTER TABLE public."users" ADD COLUMN IF NOT EXISTS "website_url" VARCHAR(255);
+                    ALTER TABLE public."users" ADD COLUMN IF NOT EXISTS "business_address" TEXT;
+                ');
+            } catch (Throwable $alterIgnored) {}
 
             $conn = new SupabaseMysqliAdapter($pdo);
             $connectedToSupabase = true;

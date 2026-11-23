@@ -117,7 +117,7 @@ if (!function_exists('e')) {
 }
 
 if (!function_exists('scalarQuery')) {
-    function scalarQuery(mysqli $conn, string $sql): int {
+    function scalarQuery($conn, string $sql): int {
         $result = $conn->query($sql);
         if (!$result) {
             return 0;
@@ -128,7 +128,7 @@ if (!function_exists('scalarQuery')) {
 }
 
 if (!function_exists('tableColumns')) {
-    function tableColumns(mysqli $conn, string $table): array {
+    function tableColumns($conn, string $table): array {
         $allowed = ['users', 'user_addresses', 'agency_site_content', 'agency_services', 'services', 'categories', 'service_reviews'];
         if (!in_array($table, $allowed, true)) return [];
         $result = $conn->query("SHOW COLUMNS FROM `{$table}`");
