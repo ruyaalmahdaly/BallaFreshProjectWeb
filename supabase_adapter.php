@@ -55,6 +55,7 @@ class SupabaseMysqliResultAdapter {
 class SupabaseMysqliStmtAdapter {
     private PDO $pdo;
     private PDOStatement $stmt;
+    private ?SupabaseMysqliAdapter $adapter = null;
     private array $boundParams = [];
     private array $boundResults = [];
     public int $insert_id = 0;
@@ -64,9 +65,10 @@ class SupabaseMysqliStmtAdapter {
     private ?array $lastResultRows = null;
     private int $resultCursor = 0;
 
-    public function __construct(PDO $pdo, PDOStatement $stmt) {
+    public function __construct(PDO $pdo, PDOStatement $stmt, ?SupabaseMysqliAdapter $adapter = null) {
         $this->pdo = $pdo;
         $this->stmt = $stmt;
+        $this->adapter = $adapter;
     }
 
     public function bind_param(string $types, &...$args): bool {
@@ -96,6 +98,9 @@ class SupabaseMysqliStmtAdapter {
                 $lastId = (int)$this->pdo->lastInsertId();
                 if ($lastId > 0) {
                     $this->insert_id = $lastId;
+                    if ($this->adapter !== null) {
+                        $this->adapter->insert_id = $lastId;
+                    }
                 }
             } catch (Throwable $e) {}
 
@@ -156,6 +161,24 @@ class SupabaseMysqliAdapter {
         $this->pdo = $pdo;
     }
 
+    public function __get(string $name) {
+        if ($name === 'insert_id') {
+            if ($this->insert_id > 0) {
+                return $this->insert_id;
+            }
+            try {
+                $lid = (int)$this->pdo->lastInsertId();
+                if ($lid > 0) {
+                    $this->insert_id = $lid;
+                }
+                return $this->insert_id;
+            } catch (Throwable $e) {
+                return $this->insert_id;
+            }
+        }
+        return null;
+    }
+
     private function translateSql(string $sql): string {
         // Ganti backticks MySQL `table` menjadi PostgreSQL quotes "table"
         $sql = preg_replace('/`([^`]+)`/', '"$1"', $sql);
@@ -191,7 +214,7 @@ class SupabaseMysqliAdapter {
         try {
             $translated = $this->translateSql($sql);
             $stmt = $this->pdo->prepare($translated);
-            return new SupabaseMysqliStmtAdapter($this->pdo, $stmt);
+            return new SupabaseMysqliStmtAdapter($this->pdo, $stmt, $this);
         } catch (PDOException $e) {
             $this->error = $e->getMessage();
             $this->errno = (int)$e->getCode();

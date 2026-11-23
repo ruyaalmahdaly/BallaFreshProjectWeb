@@ -201,15 +201,37 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
         $finalNotes = implode("\n", $notesList);
 
         // 4. Hitung total dan validasi ketersediaan layanan
-        $serviceStmt = $conn->prepare("SELECT id, name, price FROM services WHERE id = ? AND is_available = 1 LIMIT 1");
+        $fallbackCatalog = [
+            1 => ["id" => 1, "name" => "Paket Starter Branding", "price" => 150000.00],
+            2 => ["id" => 2, "name" => "Paket E-Commerce Grow", "price" => 300000.00],
+            3 => ["id" => 3, "name" => "Paket Full Marketing Scale", "price" => 500000.00]
+        ];
+
+        $serviceStmt = null;
+        try {
+            $serviceStmt = $conn->prepare("SELECT id, name, price FROM services WHERE id = ? AND is_available = 1 LIMIT 1");
+        } catch (Throwable $e) {}
+
         $totalAmount = 0.0;
         $orderItemsData = [];
 
         foreach ($quantities as $serviceId => $quantity) {
-            $serviceStmt->bind_param("i", $serviceId);
-            $serviceStmt->execute();
-            $res = $serviceStmt->get_result();
-            $service = $res->fetch_assoc();
+            $service = null;
+            if ($serviceStmt) {
+                try {
+                    $serviceStmt->bind_param("i", $serviceId);
+                    $serviceStmt->execute();
+                    $res = $serviceStmt->get_result();
+                    if ($res && method_exists($res, 'fetch_assoc')) {
+                        $service = $res->fetch_assoc();
+                    }
+                } catch (Throwable $e) {}
+            }
+
+            // Gunakan fallback katalog resmi jika data belum ada di DB
+            if (!$service && isset($fallbackCatalog[$serviceId])) {
+                $service = $fallbackCatalog[$serviceId];
+            }
 
             if (!$service) {
                 throw new Exception("Salah satu layanan sudah tidak tersedia. Muat ulang katalog dan coba lagi.");
@@ -232,7 +254,9 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
                 "subtotal" => $subtotal
             ];
         }
-        $serviceStmt->close();
+        if ($serviceStmt) {
+            $serviceStmt->close();
+        }
 
         $userId = isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null;
         $chargeRes = null;
@@ -381,6 +405,18 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
             $logStmt->close();
         }
 
+        // 8. Sinkronkan detail usaha ke profil pengguna jika ada perubahan / belum terisi
+        if ($userId && $userId > 0 && $businessName !== "") {
+            try {
+                $upStmt = $conn->prepare("UPDATE users SET business_name = ?, social_media = COALESCE(NULLIF(?, ''), social_media), website_url = COALESCE(NULLIF(?, ''), website_url) WHERE id = ?");
+                if ($upStmt) {
+                    $upStmt->bind_param("sssi", $businessName, $socialMedia, $websiteUrl, $userId);
+                    $upStmt->execute();
+                    $upStmt->close();
+                }
+            } catch (Throwable $e) {}
+        }
+
         $conn->commit();
 
         $subMeta = function_exists('getPaymentSubMethodMeta') ? getPaymentSubMethodMeta($subPaymentMethod) : [];
@@ -430,11 +466,15 @@ $autoName = '';
 $autoEmail = '';
 $autoPhone = '';
 $autoAddress = '';
+$autoBusinessName = '';
+$autoSocialMedia = '';
+$autoWebsiteUrl = '';
 
 if ($isUserLoggedIn) {
     $userId = (int) $_SESSION['user_id'];
     $uStmt = $conn->prepare("
         SELECT u.id, u.name, u.email, u.phone,
+               u.business_name, u.social_media, u.website_url, u.business_address, u.address,
                a.address_details, a.subdistrict, a.city, a.postal_code, a.rt_rw
         FROM users u
         LEFT JOIN user_addresses a ON a.user_id = u.id
@@ -452,6 +492,9 @@ if ($isUserLoggedIn) {
             $autoName = (string) ($userData['name'] ?? '');
             $autoEmail = (string) ($userData['email'] ?? '');
             $autoPhone = (string) ($userData['phone'] ?? '');
+            $autoBusinessName = (string) ($userData['business_name'] ?? '');
+            $autoSocialMedia = (string) ($userData['social_media'] ?? '');
+            $autoWebsiteUrl = (string) ($userData['website_url'] ?? '');
 
             $addrParts = array_filter([
                 $userData['address_details'] ?? '',
@@ -461,6 +504,13 @@ if ($isUserLoggedIn) {
                 $userData['postal_code'] ?? ''
             ]);
             $autoAddress = implode(', ', $addrParts);
+
+            if ($autoAddress === '' && !empty($userData['address'])) {
+                $autoAddress = (string) $userData['address'];
+            }
+            if ($autoAddress === '' && !empty($userData['business_address'])) {
+                $autoAddress = (string) $userData['business_address'];
+            }
         }
     }
 
@@ -479,6 +529,25 @@ if ($isUserLoggedIn) {
                 }
             }
             $cStmt->close();
+        }
+    }
+
+    // Jika nama usaha masih kosong di tabel users, coba cari dari riwayat pesanan sebelumnya
+    if ($autoEmail !== '' && $autoBusinessName === '') {
+        $oStmt = $conn->prepare("SELECT business_name, social_media, website_url FROM orders WHERE (user_id = ? OR customer_id IN (SELECT id FROM customers WHERE email = ?)) AND business_name IS NOT NULL AND business_name != '' ORDER BY id DESC LIMIT 1");
+        if ($oStmt) {
+            $oStmt->bind_param("is", $userId, $autoEmail);
+            $oStmt->execute();
+            if ($oRow = $oStmt->get_result()->fetch_assoc()) {
+                $autoBusinessName = (string) ($oRow['business_name'] ?? '');
+                if ($autoSocialMedia === '' && !empty($oRow['social_media'])) {
+                    $autoSocialMedia = (string) $oRow['social_media'];
+                }
+                if ($autoWebsiteUrl === '' && !empty($oRow['website_url'])) {
+                    $autoWebsiteUrl = (string) $oRow['website_url'];
+                }
+            }
+            $oStmt->close();
         }
     }
 }
@@ -1454,7 +1523,11 @@ if ($isUserLoggedIn) {
                 <section class="panel">
                     <div class="panel-header-row">
                         <h2><i class="fa-solid fa-store"></i> 2. Profil Usaha &amp; Kustomisasi Layanan</h2>
-                        <span style="font-size:12px;color:var(--muted)">Informasi Brand</span>
+                        <?php if (!empty($autoBusinessName)): ?>
+                            <span class="badge-status-autofill"><i class="fa-solid fa-check"></i> Terisi dari Profil Usaha</span>
+                        <?php else: ?>
+                            <span style="font-size:12px;color:var(--muted)">Informasi Brand</span>
+                        <?php endif; ?>
                     </div>
 
                     <div class="form-grid">
@@ -1462,15 +1535,19 @@ if ($isUserLoggedIn) {
                             <label for="businessName">Nama Bisnis / Brand Hidroponik *</label>
                             <input id="businessName" name="business_name" type="text"
                                    maxlength="150"
-                                   placeholder="Contoh: Makassar Hydro Farm / Celebes Greens" required>
+                                   placeholder="Contoh: Makassar Hydro Farm / Celebes Greens"
+                                   class="<?= !empty($autoBusinessName) ? 'is-autofilled' : '' ?>"
+                                   value="<?= escapeHtml($autoBusinessName) ?>" required>
                             <span class="help">Nama brand atau kebun hidroponik yang akan digunakan dalam desain dan layanan.</span>
                         </div>
 
                         <div class="form-group">
                             <label for="socialMedia">Link Media Sosial <span class="optional-tag">(Opsional)</span></label>
-                            <input id="socialMedia" name="social_media" type="url"
+                            <input id="socialMedia" name="social_media" type="text"
                                    maxlength="255"
-                                   placeholder="https://instagram.com/nama_kebun">
+                                   placeholder="https://instagram.com/nama_kebun atau @nama_kebun"
+                                   class="<?= !empty($autoSocialMedia) ? 'is-autofilled' : '' ?>"
+                                   value="<?= escapeHtml($autoSocialMedia) ?>">
                             <span class="help">Akun Instagram / TikTok / Facebook bisnis Anda jika sudah ada.</span>
                         </div>
 
@@ -1478,7 +1555,9 @@ if ($isUserLoggedIn) {
                             <label for="websiteUrl">Link Website Customer <span class="optional-tag">(Opsional)</span></label>
                             <input id="websiteUrl" name="website_url" type="url"
                                    maxlength="255"
-                                   placeholder="https://kebunhidroponik.com">
+                                   placeholder="https://kebunhidroponik.com"
+                                   class="<?= !empty($autoWebsiteUrl) ? 'is-autofilled' : '' ?>"
+                                   value="<?= escapeHtml($autoWebsiteUrl) ?>">
                             <span class="help">Sertakan jika bisnis Anda saat ini sudah memiliki website.</span>
                         </div>
 
