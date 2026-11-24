@@ -1568,6 +1568,506 @@ if (count($nameParts) >= 2) {
 } elseif (!empty($nameParts[0])) {
     $initials = strtoupper(substr($nameParts[0], 0, 2));
 }
+
+// =========================================================================
+// BUSINESS INTELLIGENCE & ANALYTICS ENGINE (DASHBOARD ONLY)
+// =========================================================================
+$biData = null;
+if ($page === 'dashboard') {
+    $biPeriod = (string)($_GET['bi_period'] ?? 'all');
+    if (!in_array($biPeriod, ['all', 'today', '7days', 'this_month', 'this_year'], true)) {
+        $biPeriod = 'all';
+    }
+
+    $tz = new DateTimeZone('Asia/Makassar');
+    $now = new DateTime('now', $tz);
+
+    $curStart = null;
+    $curEnd = null;
+    $prevStart = null;
+    $prevEnd = null;
+    $periodLabel = 'Semua Waktu';
+    $comparisonLabel = 'vs Periode Sebelumnya (Tahun Lalu)';
+
+    if ($biPeriod === 'today') {
+        $curStart = (clone $now)->format('Y-m-d 00:00:00');
+        $curEnd = (clone $now)->format('Y-m-d 23:59:59');
+        $prevDay = (clone $now)->modify('-1 day');
+        $prevStart = $prevDay->format('Y-m-d 00:00:00');
+        $prevEnd = $prevDay->format('Y-m-d 23:59:59');
+        $periodLabel = 'Hari Ini (' . (clone $now)->format('d M Y') . ')';
+        $comparisonLabel = 'vs Kemarin (' . $prevDay->format('d M') . ')';
+    } elseif ($biPeriod === '7days') {
+        $start7 = (clone $now)->modify('-6 days');
+        $curStart = $start7->format('Y-m-d 00:00:00');
+        $curEnd = (clone $now)->format('Y-m-d 23:59:59');
+        $prevStartObj = (clone $now)->modify('-13 days');
+        $prevEndObj = (clone $now)->modify('-7 days');
+        $prevStart = $prevStartObj->format('Y-m-d 00:00:00');
+        $prevEnd = $prevEndObj->format('Y-m-d 23:59:59');
+        $periodLabel = '7 Hari Terakhir (' . $start7->format('d M') . ' - ' . (clone $now)->format('d M') . ')';
+        $comparisonLabel = 'vs 7 Hari Sebelumnya';
+    } elseif ($biPeriod === 'this_month') {
+        $curStart = (clone $now)->format('Y-m-01 00:00:00');
+        $curEnd = (clone $now)->format('Y-m-t 23:59:59');
+        $prevMonth = (clone $now)->modify('first day of previous month');
+        $prevStart = $prevMonth->format('Y-m-01 00:00:00');
+        $prevEnd = $prevMonth->format('Y-m-t 23:59:59');
+        $periodLabel = 'Bulan Ini (' . (clone $now)->format('F Y') . ')';
+        $comparisonLabel = 'vs Bulan Lalu (' . $prevMonth->format('F') . ')';
+    } elseif ($biPeriod === 'this_year') {
+        $curStart = (clone $now)->format('Y-01-01 00:00:00');
+        $curEnd = (clone $now)->format('Y-12-31 23:59:59');
+        $prevYear = (int)$now->format('Y') - 1;
+        $prevStart = "{$prevYear}-01-01 00:00:00";
+        $prevEnd = "{$prevYear}-12-31 23:59:59";
+        $periodLabel = 'Tahun Ini (' . (clone $now)->format('Y') . ')';
+        $comparisonLabel = "vs Tahun Lalu ({$prevYear})";
+    } else {
+        // 'all'
+        $periodLabel = 'Semua Waktu (All Time)';
+        $prevYear = (int)$now->format('Y') - 1;
+        $prevStart = "{$prevYear}-01-01 00:00:00";
+        $prevEnd = "{$prevYear}-12-31 23:59:59";
+        $comparisonLabel = "vs Tahun Sebelumnya ({$prevYear})";
+    }
+
+    // 1. Ambil seluruh data pesanan riil untuk analitik
+    $biOrders = [];
+    $biOrderQ = $conn->query("
+        SELECT o.id, o.order_number, o.customer_id, o.total_amount, o.status,
+               o.payment_method, o.payment_type, o.transaction_status, o.payment_status,
+               o.created_at, o.business_name, c.name AS customer_name, c.email AS customer_email
+        FROM orders o
+        LEFT JOIN customers c ON c.id = o.customer_id
+        ORDER BY o.created_at ASC
+    ");
+    if ($biOrderQ) {
+        while ($r = $biOrderQ->fetch_assoc()) {
+            $biOrders[] = $r;
+        }
+        if (method_exists($biOrderQ, 'free')) {
+            $biOrderQ->free();
+        }
+    }
+    // Jika query di atas kosong, gunakan $orders yang sudah diload sebelumnya
+    if (empty($biOrders) && !empty($orders)) {
+        $biOrders = $orders;
+    }
+
+    // Filter transaksi sukses (pendapatan hanya dari transaksi yang berhasil)
+    $isBiOrderSuccess = function(array $o): bool {
+        $paySt = strtolower(trim((string)($o['payment_status'] ?? '')));
+        $st = strtolower(trim((string)($o['status'] ?? '')));
+        if (in_array($paySt, ['settlement', 'capture', 'lunas', 'paid', 'success'], true)) {
+            return true;
+        }
+        if ($st === 'completed' && !in_array($paySt, ['cancel', 'cancelled', 'deny', 'expire', 'expired', 'failed', 'gagal'], true)) {
+            return true;
+        }
+        return false;
+    };
+
+    // Filter rentang waktu
+    $inPeriod = function(string $dateStr, ?string $start, ?string $end): bool {
+        if ($start === null || $end === null) return true;
+        $t = strtotime($dateStr);
+        return ($t >= strtotime($start) && $t <= strtotime($end));
+    };
+
+    // 2. Hitung Metrik Periode Berjalan vs Periode Sebelumnya
+    $curOrders = [];
+    $prevOrders = [];
+    $allSuccessfulOrders = [];
+
+    foreach ($biOrders as $o) {
+        $cDate = (string)($o['created_at'] ?? '');
+        $isSucc = $isBiOrderSuccess($o);
+        if ($isSucc) {
+            $allSuccessfulOrders[] = $o;
+        }
+
+        if ($inPeriod($cDate, $curStart, $curEnd)) {
+            $curOrders[] = $o;
+        }
+        if ($prevStart !== null && $prevEnd !== null && $inPeriod($cDate, $prevStart, $prevEnd)) {
+            $prevOrders[] = $o;
+        }
+    }
+
+    $curSuccessOrders = array_filter($curOrders, $isBiOrderSuccess);
+    $prevSuccessOrders = array_filter($prevOrders, $isBiOrderSuccess);
+
+    $curRevenue = (float)array_sum(array_map(fn($o) => (float)$o['total_amount'], $curSuccessOrders));
+    $prevRevenue = (float)array_sum(array_map(fn($o) => (float)$o['total_amount'], $prevSuccessOrders));
+
+    $curSuccessCount = count($curSuccessOrders);
+    $prevSuccessCount = count($prevSuccessOrders);
+
+    $curAov = $curSuccessCount > 0 ? ($curRevenue / $curSuccessCount) : 0.0;
+    $prevAov = $prevSuccessCount > 0 ? ($prevRevenue / $prevSuccessCount) : 0.0;
+
+    $curTotalOrderCount = count($curOrders);
+    $prevTotalOrderCount = count($prevOrders);
+
+    // Hitung pertumbuhan %
+    $calcBiGrowth = function(float $current, float $previous): array {
+        if ($previous > 0) {
+            $diff = $current - $previous;
+            $pct = round(($diff / $previous) * 100, 1);
+            return [
+                'pct' => $pct,
+                'is_positive' => $pct >= 0,
+                'diff' => $diff,
+                'text' => ($pct >= 0 ? '+' : '') . $pct . '%'
+            ];
+        }
+        if ($current > 0) {
+            return ['pct' => 100.0, 'is_positive' => true, 'diff' => $current, 'text' => '+100%'];
+        }
+        return ['pct' => 0.0, 'is_positive' => true, 'diff' => 0.0, 'text' => '0%'];
+    };
+
+    $revenueGrowth = $calcBiGrowth($curRevenue, $prevRevenue);
+    $ordersGrowth = $calcBiGrowth((float)$curSuccessCount, (float)$prevSuccessCount);
+    $aovGrowth = $calcBiGrowth($curAov, $prevAov);
+    $totalOrdersGrowth = $calcBiGrowth((float)$curTotalOrderCount, (float)$prevTotalOrderCount);
+
+    // 3. Time Series Datasets untuk Grafik Penjualan (Harian, Mingguan, Bulanan, Tahunan)
+    // Harian (30 hari terakhir)
+    $tsDaily = [];
+    for ($i = 29; $i >= 0; $i--) {
+        $dObj = (clone $now)->modify("-{$i} days");
+        $key = $dObj->format('Y-m-d');
+        $label = $dObj->format('d M');
+        $tsDaily[$key] = ['label' => $label, 'revenue' => 0.0, 'orders' => 0];
+    }
+    foreach ($allSuccessfulOrders as $o) {
+        $d = date('Y-m-d', strtotime((string)$o['created_at']));
+        if (isset($tsDaily[$d])) {
+            $tsDaily[$d]['revenue'] += (float)$o['total_amount'];
+            $tsDaily[$d]['orders']++;
+        }
+    }
+
+    // Mingguan (8 minggu terakhir)
+    $tsWeekly = [];
+    for ($w = 7; $w >= 0; $w--) {
+        $wStart = (clone $now)->modify("-{$w} weeks")->modify('monday this week');
+        $wEnd = (clone $wStart)->modify('+6 days');
+        $wKey = $wStart->format('Y-m-d');
+        $tsWeekly[$wKey] = [
+            'label' => $wStart->format('d M') . ' - ' . $wEnd->format('d M'),
+            'start' => $wStart->format('Y-m-d 00:00:00'),
+            'end' => $wEnd->format('Y-m-d 23:59:59'),
+            'revenue' => 0.0,
+            'orders' => 0
+        ];
+    }
+    foreach ($allSuccessfulOrders as $o) {
+        $ts = strtotime((string)$o['created_at']);
+        foreach ($tsWeekly as $k => &$wData) {
+            if ($ts >= strtotime($wData['start']) && $ts <= strtotime($wData['end'])) {
+                $wData['revenue'] += (float)$o['total_amount'];
+                $wData['orders']++;
+                break;
+            }
+        }
+        unset($wData);
+    }
+
+    // Bulanan (12 bulan terakhir)
+    $tsMonthly = [];
+    for ($m = 11; $m >= 0; $m--) {
+        $mObj = (clone $now)->modify("-{$m} months");
+        $mKey = $mObj->format('Y-m');
+        $tsMonthly[$mKey] = [
+            'label' => $mObj->format('M Y'),
+            'revenue' => 0.0,
+            'orders' => 0
+        ];
+    }
+    foreach ($allSuccessfulOrders as $o) {
+        $mKey = date('Y-m', strtotime((string)$o['created_at']));
+        if (isset($tsMonthly[$mKey])) {
+            $tsMonthly[$mKey]['revenue'] += (float)$o['total_amount'];
+            $tsMonthly[$mKey]['orders']++;
+        }
+    }
+
+    // Tahunan (3 tahun terakhir)
+    $tsYearly = [];
+    $thisY = (int)$now->format('Y');
+    for ($y = $thisY - 2; $y <= $thisY; $y++) {
+        $tsYearly[(string)$y] = [
+            'label' => 'Tahun ' . $y,
+            'revenue' => 0.0,
+            'orders' => 0
+        ];
+    }
+    foreach ($allSuccessfulOrders as $o) {
+        $yKey = date('Y', strtotime((string)$o['created_at']));
+        if (isset($tsYearly[$yKey])) {
+            $tsYearly[$yKey]['revenue'] += (float)$o['total_amount'];
+            $tsYearly[$yKey]['orders']++;
+        }
+    }
+
+    // 4. Analisis Status Transaksi & Distribusi Metode Pembayaran
+    $statusDist = [
+        'completed' => ['label' => 'Berhasil / Selesai', 'count' => 0, 'color' => '#5b8121'],
+        'processing' => ['label' => 'Diproses', 'count' => 0, 'color' => '#3b82f6'],
+        'pending' => ['label' => 'Menunggu Pembayaran', 'count' => 0, 'color' => '#e48e1e'],
+        'cancelled' => ['label' => 'Dibatalkan / Kedaluwarsa', 'count' => 0, 'color' => '#ef4444']
+    ];
+    $paymentDist = [
+        'qris' => ['label' => 'QRIS (Gopay/Shopee/BCA)', 'count' => 0, 'revenue' => 0.0, 'color' => '#10b981'],
+        'bank_transfer' => ['label' => 'Transfer Bank (BCA/Mandiri/BRI)', 'count' => 0, 'revenue' => 0.0, 'color' => '#3b82f6'],
+        'gopay' => ['label' => 'GoPay', 'count' => 0, 'revenue' => 0.0, 'color' => '#06b6d4'],
+        'shopeepay' => ['label' => 'ShopeePay', 'count' => 0, 'revenue' => 0.0, 'color' => '#f97316'],
+        'manual_transfer' => ['label' => 'Transfer Manual', 'count' => 0, 'revenue' => 0.0, 'color' => '#8b5cf6'],
+        'other' => ['label' => 'Lainnya', 'count' => 0, 'revenue' => 0.0, 'color' => '#64748b']
+    ];
+
+    foreach ($curOrders as $o) {
+        $st = strtolower(trim((string)($o['status'] ?? 'pending')));
+        $paySt = strtolower(trim((string)($o['payment_status'] ?? '')));
+        if ($isBiOrderSuccess($o)) {
+            $statusDist['completed']['count']++;
+        } elseif ($st === 'processing') {
+            $statusDist['processing']['count']++;
+        } elseif (in_array($paySt, ['cancel', 'cancelled', 'deny', 'expire', 'expired', 'failed'], true) || $st === 'cancelled') {
+            $statusDist['cancelled']['count']++;
+        } else {
+            $statusDist['pending']['count']++;
+        }
+
+        // Metode pembayaran
+        $method = strtolower(trim((string)($o['payment_method'] ?? '')));
+        $subMethod = strtolower(trim((string)($o['payment_type'] ?? '')));
+        $amt = (float)($o['total_amount'] ?? 0);
+        $succ = $isBiOrderSuccess($o);
+
+        if ($subMethod === 'qris' || $method === 'qris' || strpos($method, 'qris') !== false) {
+            $paymentDist['qris']['count']++;
+            if ($succ) $paymentDist['qris']['revenue'] += $amt;
+        } elseif (in_array($method, ['bca', 'mandiri', 'bri', 'bni'], true) || in_array($subMethod, ['bca_va', 'mandiri_va', 'bri_va', 'bni_va'], true) || strpos($method, 'bank') !== false) {
+            $paymentDist['bank_transfer']['count']++;
+            if ($succ) $paymentDist['bank_transfer']['revenue'] += $amt;
+        } elseif ($subMethod === 'gopay') {
+            $paymentDist['gopay']['count']++;
+            if ($succ) $paymentDist['gopay']['revenue'] += $amt;
+        } elseif ($subMethod === 'shopeepay') {
+            $paymentDist['shopeepay']['count']++;
+            if ($succ) $paymentDist['shopeepay']['revenue'] += $amt;
+        } elseif ($method === 'manual') {
+            $paymentDist['manual_transfer']['count']++;
+            if ($succ) $paymentDist['manual_transfer']['revenue'] += $amt;
+        } else {
+            $paymentDist['other']['count']++;
+            if ($succ) $paymentDist['other']['revenue'] += $amt;
+        }
+    }
+
+    // 5. Layanan Terlaris (Ranking Berdasarkan Jumlah Pesanan & Pendapatan)
+    $biOrderItems = [];
+    $itemQ = $conn->query("
+        SELECT oi.id, oi.order_id, oi.service_id, oi.service_name, oi.quantity, oi.unit_price, oi.subtotal,
+               o.payment_status, o.status, o.created_at
+        FROM order_items oi
+        JOIN orders o ON o.id = oi.order_id
+        ORDER BY oi.id ASC
+    ");
+    if ($itemQ) {
+        while ($it = $itemQ->fetch_assoc()) {
+            $biOrderItems[] = $it;
+        }
+        if (method_exists($itemQ, 'free')) {
+            $itemQ->free();
+        }
+    }
+
+    $serviceRanking = [];
+    // Daftar layanan resmi Balla' Fresh untuk baseline
+    $baselineServices = [
+        'Paket Starter Branding' => ['category' => 'Starter Branding', 'price' => 150000.00],
+        'Paket E-Commerce Grow' => ['category' => 'E-Commerce Grow', 'price' => 300000.00],
+        'Paket Full Marketing Scale' => ['category' => 'Full Marketing Scale', 'price' => 500000.00],
+        'Desain Logo & Identitas Brand' => ['category' => 'Starter Branding', 'price' => 750000.00],
+        'Website E-Commerce & Pemesanan' => ['category' => 'E-Commerce Grow', 'price' => 1500000.00],
+        'Social Media Management Terpadu' => ['category' => 'Full Marketing Scale', 'price' => 1200000.00]
+    ];
+    foreach ($baselineServices as $sName => $bInfo) {
+        $serviceRanking[$sName] = [
+            'name' => $sName,
+            'category' => $bInfo['category'],
+            'order_count' => 0,
+            'total_quantity' => 0,
+            'revenue' => 0.0
+        ];
+    }
+
+    foreach ($biOrderItems as $it) {
+        $cDate = (string)($it['created_at'] ?? '');
+        if (!$inPeriod($cDate, $curStart, $curEnd)) {
+            continue;
+        }
+        $sName = trim((string)$it['service_name']);
+        if ($sName === '') continue;
+        if (!isset($serviceRanking[$sName])) {
+            $serviceRanking[$sName] = [
+                'name' => $sName,
+                'category' => 'Layanan Digital',
+                'order_count' => 0,
+                'total_quantity' => 0,
+                'revenue' => 0.0
+            ];
+        }
+        $serviceRanking[$sName]['order_count']++;
+        $serviceRanking[$sName]['total_quantity'] += (int)($it['quantity'] ?? 1);
+        if ($isBiOrderSuccess($it)) {
+            $serviceRanking[$sName]['revenue'] += (float)($it['subtotal'] ?? 0);
+        }
+    }
+
+    // Urutkan ranking: pendapatan tertinggi, lalu jumlah pesanan terbanyak
+    usort($serviceRanking, function($a, $b) {
+        if ($b['revenue'] !== $a['revenue']) {
+            return ($b['revenue'] > $a['revenue']) ? 1 : -1;
+        }
+        return $b['order_count'] <=> $a['order_count'];
+    });
+
+    $maxServiceRev = !empty($serviceRanking) ? max(array_column($serviceRanking, 'revenue')) : 0.0;
+    if ($maxServiceRev <= 0) $maxServiceRev = 1.0;
+
+    // 6. Performa Pelanggan (Registrasi vs Bertransaksi, Repeat Order Rate)
+    $totalRegisteredCustomers = (int)($customerCount ?? 0);
+    if ($totalRegisteredCustomers <= 0 && !empty($mitraBusinesses)) {
+        $totalRegisteredCustomers = count($mitraBusinesses);
+    }
+    // Pelanggan unik yang berhasil bertransaksi
+    $successfulCustomerIds = [];
+    $customerOrderCounts = [];
+    foreach ($allSuccessfulOrders as $o) {
+        $cId = (string)($o['customer_id'] ?? $o['customer_email'] ?? '');
+        if ($cId !== '') {
+            $successfulCustomerIds[$cId] = true;
+            $customerOrderCounts[$cId] = ($customerOrderCounts[$cId] ?? 0) + 1;
+        }
+    }
+    $activeBuyingCustomersCount = count($successfulCustomerIds);
+    $repeatCustomersCount = 0;
+    foreach ($customerOrderCounts as $cid => $cnt) {
+        if ($cnt >= 2) {
+            $repeatCustomersCount++;
+        }
+    }
+    $repeatOrderRate = $activeBuyingCustomersCount > 0 ? round(($repeatCustomersCount / $activeBuyingCustomersCount) * 100, 1) : 0.0;
+    $customerConversionRate = $totalRegisteredCustomers > 0 ? round(($activeBuyingCustomersCount / $totalRegisteredCustomers) * 100, 1) : 0.0;
+
+    // 7. Performa Website & Interaksi Nyata dari Database
+    // Total Pembaca Artikel
+    $totalArticleViews = 0;
+    $artViewCol = 'views_count';
+    $chkCol = $conn->query("SHOW COLUMNS FROM articles LIKE 'views_count'");
+    if (!$chkCol || $chkCol->num_rows === 0) {
+        $artViewCol = 'views';
+    }
+    $artVRes = $conn->query("SELECT COALESCE(SUM({$artViewCol}), 0) AS total_views, COUNT(*) AS count_published FROM articles WHERE is_published = 1 OR is_published IS NULL");
+    if ($artVRes && $avRow = $artVRes->fetch_assoc()) {
+        $totalArticleViews = (int)$avRow['total_views'];
+    }
+
+    // Konsultasi & Pesan Chat
+    $totalConsultationsCount = count($allConsultations);
+    $totalChatMessagesCount = 0;
+    $msgQ = $conn->query("SELECT COUNT(*) AS total_msg FROM consultation_messages");
+    if ($msgQ && $mRow = $msgQ->fetch_assoc()) {
+        $totalChatMessagesCount = (int)$mRow['total_msg'];
+    }
+
+    // Kelengkapan Profil Usaha Mitra
+    $completedProfiles = 0;
+    foreach ($mitraBusinesses as $mb) {
+        if (!empty($mb['business_name'])) {
+            $completedProfiles++;
+        }
+    }
+    $profileCompletionRate = count($mitraBusinesses) > 0 ? round(($completedProfiles / count($mitraBusinesses)) * 100, 1) : 0.0;
+
+    // 8. Susun Ringkasan Komparasi Periode
+    $comparisonRows = [
+        [
+            'metric' => 'Total Pendapatan Bersih',
+            'icon' => 'fa-wallet',
+            'cur' => 'Rp ' . number_format($curRevenue, 0, ',', '.'),
+            'prev' => 'Rp ' . number_format($prevRevenue, 0, ',', '.'),
+            'growth' => $revenueGrowth,
+            'note' => 'Hanya dari transaksi terkonfirmasi berhasil'
+        ],
+        [
+            'metric' => 'Jumlah Transaksi Berhasil',
+            'icon' => 'fa-circle-check',
+            'cur' => number_format($curSuccessCount, 0, ',', '.') . ' transaksi',
+            'prev' => number_format($prevSuccessCount, 0, ',', '.') . ' transaksi',
+            'growth' => $ordersGrowth,
+            'note' => 'Pesanan lunas atau selesai dikerjakan'
+        ],
+        [
+            'metric' => 'Rata-rata Nilai Transaksi (AOV)',
+            'icon' => 'fa-receipt',
+            'cur' => 'Rp ' . number_format($curAov, 0, ',', '.'),
+            'prev' => 'Rp ' . number_format($prevAov, 0, ',', '.'),
+            'growth' => $aovGrowth,
+            'note' => 'Pendapatan dibagi jumlah transaksi berhasil'
+        ],
+        [
+            'metric' => 'Total Pesanan Masuk (Semua Status)',
+            'icon' => 'fa-cart-shopping',
+            'cur' => number_format($curTotalOrderCount, 0, ',', '.') . ' pesanan',
+            'prev' => number_format($prevTotalOrderCount, 0, ',', '.') . ' pesanan',
+            'growth' => $totalOrdersGrowth,
+            'note' => 'Termasuk pesanan menunggu & sedang diproses'
+        ]
+    ];
+
+    $biData = [
+        'period' => $biPeriod,
+        'periodLabel' => $periodLabel,
+        'comparisonLabel' => $comparisonLabel,
+        'curRevenue' => $curRevenue,
+        'prevRevenue' => $prevRevenue,
+        'revenueGrowth' => $revenueGrowth,
+        'curSuccessCount' => $curSuccessCount,
+        'prevSuccessCount' => $prevSuccessCount,
+        'ordersGrowth' => $ordersGrowth,
+        'curAov' => $curAov,
+        'prevAov' => $prevAov,
+        'aovGrowth' => $aovGrowth,
+        'curTotalOrderCount' => $curTotalOrderCount,
+        'totalOrdersGrowth' => $totalOrdersGrowth,
+        'totalRegisteredCustomers' => $totalRegisteredCustomers,
+        'activeBuyingCustomersCount' => $activeBuyingCustomersCount,
+        'repeatCustomersCount' => $repeatCustomersCount,
+        'repeatOrderRate' => $repeatOrderRate,
+        'customerConversionRate' => $customerConversionRate,
+        'tsDaily' => $tsDaily,
+        'tsWeekly' => $tsWeekly,
+        'tsMonthly' => $tsMonthly,
+        'tsYearly' => $tsYearly,
+        'statusDist' => $statusDist,
+        'paymentDist' => $paymentDist,
+        'serviceRanking' => $serviceRanking,
+        'maxServiceRev' => $maxServiceRev,
+        'totalArticleViews' => $totalArticleViews,
+        'totalConsultationsCount' => $totalConsultationsCount,
+        'totalChatMessagesCount' => $totalChatMessagesCount,
+        'profileCompletionRate' => $profileCompletionRate,
+        'completedProfiles' => $completedProfiles,
+        'comparisonRows' => $comparisonRows
+    ];
+}
 ?>
 <!doctype html>
 <html lang="id">
@@ -1579,6 +2079,7 @@ if (count($nameParts) >= 2) {
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <style>
         :root {
             --green-950: #5b8121;
@@ -2867,6 +3368,383 @@ if (count($nameParts) >= 2) {
             max-width: 440px;
             box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1), 0 10px 10px -5px rgba(0,0,0,0.04);
         }
+
+        /* =========================================================================
+           BUSINESS INTELLIGENCE & ANALYTICS SUITE (BALLA' FRESH ADMIN)
+           ========================================================================= */
+        .bi-analytics-section {
+            margin-bottom: 28px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        .bi-header-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 14px;
+            background: #ffffff;
+            padding: 18px 22px;
+            border-radius: 16px;
+            border: 1px solid #e2e8f0;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.02);
+        }
+        .bi-title-group h2 {
+            margin: 0 0 4px;
+            font-size: 18px;
+            font-weight: 800;
+            font-family: "Manrope", sans-serif;
+            color: #1e293b;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .bi-title-group p {
+            margin: 0;
+            font-size: 12px;
+            color: #64748b;
+        }
+        .bi-filter-pills {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+        .bi-filter-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 14px;
+            border-radius: 30px;
+            font-size: 11.5px;
+            font-weight: 700;
+            background: #f8fafc;
+            color: #475569;
+            border: 1px solid #cbd5e1;
+            text-decoration: none;
+            transition: all 0.2s ease;
+            user-select: none;
+        }
+        .bi-filter-pill:hover {
+            background: #f1f5f9;
+            color: #1e293b;
+            border-color: #94a3b8;
+        }
+        .bi-filter-pill.active {
+            background: #5b8121;
+            color: #ffffff;
+            border-color: #5b8121;
+            box-shadow: 0 3px 10px rgba(91, 129, 33, 0.25);
+        }
+
+        /* 5 KPI Cards Grid */
+        .bi-kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+            gap: 14px;
+        }
+        .bi-kpi-card {
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-radius: 16px;
+            padding: 18px 20px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.025);
+            position: relative;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        .bi-kpi-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.05);
+        }
+        .bi-kpi-card::before {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3.5px;
+            background: var(--kpi-accent, #5b8121);
+        }
+        .bi-kpi-card.green { --kpi-accent: #5b8121; }
+        .bi-kpi-card.emerald { --kpi-accent: #059669; }
+        .bi-kpi-card.orange { --kpi-accent: #e48e1e; }
+        .bi-kpi-card.blue { --kpi-accent: #2563eb; }
+        .bi-kpi-card.purple { --kpi-accent: #7c3aed; }
+
+        .bi-kpi-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 10px;
+        }
+        .bi-kpi-label {
+            font-size: 11px;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 0.6px;
+            color: #64748b;
+        }
+        .bi-kpi-icon {
+            width: 36px;
+            height: 36px;
+            border-radius: 10px;
+            display: grid;
+            place-items: center;
+            font-size: 15px;
+        }
+        .bi-kpi-card.green .bi-kpi-icon { background: #eff5e5; color: #5b8121; }
+        .bi-kpi-card.emerald .bi-kpi-icon { background: #ecfdf5; color: #059669; }
+        .bi-kpi-card.orange .bi-kpi-icon { background: #fff7ed; color: #e48e1e; }
+        .bi-kpi-card.blue .bi-kpi-icon { background: #eff6ff; color: #2563eb; }
+        .bi-kpi-card.purple .bi-kpi-icon { background: #f5f3ff; color: #7c3aed; }
+
+        .bi-kpi-value {
+            font-size: 23px;
+            font-weight: 800;
+            font-family: "Manrope", sans-serif;
+            color: #0f172a;
+            letter-spacing: -0.5px;
+            line-height: 1.2;
+            margin-bottom: 8px;
+        }
+        .bi-kpi-foot {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 11.5px;
+            color: #64748b;
+            flex-wrap: wrap;
+        }
+        .bi-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 2px 7px;
+            border-radius: 20px;
+            font-weight: 800;
+            font-size: 10.5px;
+        }
+        .bi-badge.up {
+            background: #ecfdf5;
+            color: #059669;
+        }
+        .bi-badge.down {
+            background: #fef2f2;
+            color: #dc2626;
+        }
+        .bi-badge.neutral {
+            background: #f1f5f9;
+            color: #64748b;
+        }
+
+        /* 2-Column Responsive Grids */
+        .bi-grid-2col {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 18px;
+        }
+        .bi-chart-card {
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-radius: 16px;
+            padding: 20px 22px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.025);
+            display: flex;
+            flex-direction: column;
+        }
+        .bi-card-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .bi-card-title {
+            font-size: 14.5px;
+            font-weight: 800;
+            font-family: "Manrope", sans-serif;
+            color: #1e293b;
+            margin: 0 0 2px;
+            display: flex;
+            align-items: center;
+            gap: 7px;
+        }
+        .bi-card-sub {
+            font-size: 11.5px;
+            color: #64748b;
+            margin: 0;
+        }
+
+        /* Time Series Switcher Tabs */
+        .bi-tab-switcher {
+            display: inline-flex;
+            background: #f1f5f9;
+            border-radius: 8px;
+            padding: 3px;
+            gap: 2px;
+        }
+        .bi-tab-btn {
+            border: none;
+            background: transparent;
+            font-size: 11px;
+            font-weight: 700;
+            padding: 5px 11px;
+            border-radius: 6px;
+            color: #64748b;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .bi-tab-btn:hover {
+            color: #1e293b;
+        }
+        .bi-tab-btn.active {
+            background: #ffffff;
+            color: #5b8121;
+            box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+        }
+
+        .bi-chart-wrapper {
+            position: relative;
+            width: 100%;
+            height: 290px;
+        }
+
+        /* Table Ranking Layanan Terlaris */
+        .bi-table-wrap {
+            overflow-x: auto;
+            border-radius: 12px;
+            border: 1px solid #f1f5f9;
+        }
+        .bi-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+            text-align: left;
+        }
+        .bi-table th {
+            background: #f8fafc;
+            color: #475569;
+            font-weight: 800;
+            font-size: 10.5px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            padding: 11px 14px;
+            border-bottom: 1px solid #e2e8f0;
+        }
+        .bi-table td {
+            padding: 12px 14px;
+            border-bottom: 1px solid #f1f5f9;
+            color: #1e293b;
+            vertical-align: middle;
+        }
+        .bi-table tr:hover td {
+            background: #fafdf7;
+        }
+        .bi-rank-badge {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            display: inline-grid;
+            place-items: center;
+            font-size: 11px;
+            font-weight: 800;
+            background: #f1f5f9;
+            color: #475569;
+        }
+        .bi-rank-1 { background: #fef3c7; color: #b45309; }
+        .bi-rank-2 { background: #e2e8f0; color: #334155; }
+        .bi-rank-3 { background: #ffedd5; color: #c2410c; }
+
+        .bi-progress-bar {
+            width: 100%;
+            height: 7px;
+            background: #f1f5f9;
+            border-radius: 10px;
+            overflow: hidden;
+            margin-top: 5px;
+        }
+        .bi-progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #5b8121, #84cc16);
+            border-radius: 10px;
+            transition: width 0.6s ease;
+        }
+
+        /* Engagement Cards Grid */
+        .bi-engagement-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+        .bi-engage-box {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 14px 16px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .bi-engage-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 10px;
+            display: grid;
+            place-items: center;
+            font-size: 16px;
+            flex-shrink: 0;
+        }
+        .bi-engage-val {
+            font-size: 17px;
+            font-weight: 800;
+            font-family: "Manrope", sans-serif;
+            color: #0f172a;
+            line-height: 1.1;
+        }
+        .bi-engage-label {
+            font-size: 11px;
+            color: #64748b;
+            margin-top: 2px;
+        }
+
+        /* Notice Transparansi Tracking */
+        .bi-tracking-notice {
+            background: #f0fdf4;
+            border: 1px solid #bbf7d0;
+            border-radius: 12px;
+            padding: 12px 16px;
+            font-size: 12px;
+            color: #166534;
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            line-height: 1.5;
+        }
+
+        @media (max-width: 992px) {
+            .bi-grid-2col {
+                grid-template-columns: 1fr;
+            }
+        }
+        @media (max-width: 640px) {
+            .bi-header-row {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+            .bi-kpi-grid {
+                grid-template-columns: 1fr;
+            }
+            .bi-chart-wrapper {
+                height: 240px;
+            }
+        }
     </style>
 </head>
 <body class="page-<?= e($page) ?>">
@@ -2947,14 +3825,389 @@ if (count($nameParts) >= 2) {
 
         <div class="content" id="overview">
         <?php if ($page === 'dashboard'): ?>
+            <!-- ========================================================== -->
+            <!-- BUSINESS INTELLIGENCE & ANALYTICS SUITE (BALLA' FRESH)     -->
+            <!-- ========================================================== -->
+            <section class="bi-analytics-section" aria-label="Business Intelligence & Analytics">
+                
+                <!-- 1. Header BI & Interactive Period Filter -->
+                <div class="bi-header-row">
+                    <div class="bi-title-group">
+                        <span class="eyebrow" style="color:var(--green-950);"><i class="fa-solid fa-chart-line"></i> BUSINESS INTELLIGENCE &amp; ANALYTICS</span>
+                        <h2>Dashboard Performa Bisnis</h2>
+                        <p>Pemantauan terpadu performa penjualan, transaksi berhasil, loyalitas pelanggan, dan performa website.</p>
+                    </div>
+
+                    <!-- Interactive Period Filter Pills -->
+                    <div class="bi-filter-pills" role="navigation" aria-label="Filter Periode Laporan">
+                        <a href="admin_dashboard.php?page=dashboard&bi_period=all" class="bi-filter-pill <?= ($biData['period'] ?? '') === 'all' ? 'active' : '' ?>">
+                            <i class="fa-solid fa-earth-asia"></i> Semua Waktu
+                        </a>
+                        <a href="admin_dashboard.php?page=dashboard&bi_period=today" class="bi-filter-pill <?= ($biData['period'] ?? '') === 'today' ? 'active' : '' ?>">
+                            <i class="fa-regular fa-calendar"></i> Hari Ini
+                        </a>
+                        <a href="admin_dashboard.php?page=dashboard&bi_period=7days" class="bi-filter-pill <?= ($biData['period'] ?? '') === '7days' ? 'active' : '' ?>">
+                            <i class="fa-regular fa-calendar-days"></i> 7 Hari Terakhir
+                        </a>
+                        <a href="admin_dashboard.php?page=dashboard&bi_period=this_month" class="bi-filter-pill <?= ($biData['period'] ?? '') === 'this_month' ? 'active' : '' ?>">
+                            <i class="fa-regular fa-calendar-check"></i> Bulan Ini
+                        </a>
+                        <a href="admin_dashboard.php?page=dashboard&bi_period=this_year" class="bi-filter-pill <?= ($biData['period'] ?? '') === 'this_year' ? 'active' : '' ?>">
+                            <i class="fa-solid fa-calendar-week"></i> Tahun Ini
+                        </a>
+                    </div>
+                </div>
+
+                <!-- 2. 5 Executive KPI Cards -->
+                <div class="bi-kpi-grid">
+                    <!-- KPI 1: Total Pendapatan Bersih (Hanya dari Transaksi Berhasil) -->
+                    <article class="bi-kpi-card green">
+                        <div class="bi-kpi-head">
+                            <span class="bi-kpi-label">Total Pendapatan</span>
+                            <div class="bi-kpi-icon"><i class="fa-solid fa-wallet"></i></div>
+                        </div>
+                        <div class="bi-kpi-value">Rp <?= number_format((float)($biData['curRevenue'] ?? 0), 0, ',', '.') ?></div>
+                        <div class="bi-kpi-foot">
+                            <span class="bi-badge <?= ($biData['revenueGrowth']['is_positive'] ?? true) ? 'up' : 'down' ?>">
+                                <i class="fa-solid <?= ($biData['revenueGrowth']['is_positive'] ?? true) ? 'fa-arrow-trend-up' : 'fa-arrow-trend-down' ?>"></i>
+                                <?= e($biData['revenueGrowth']['text'] ?? '0%') ?>
+                            </span>
+                            <span><?= e($biData['comparisonLabel'] ?? '') ?></span>
+                        </div>
+                    </article>
+
+                    <!-- KPI 2: Total Transaksi Berhasil -->
+                    <article class="bi-kpi-card emerald">
+                        <div class="bi-kpi-head">
+                            <span class="bi-kpi-label">Transaksi Berhasil</span>
+                            <div class="bi-kpi-icon"><i class="fa-solid fa-circle-check"></i></div>
+                        </div>
+                        <div class="bi-kpi-value"><?= number_format((int)($biData['curSuccessCount'] ?? 0), 0, ',', '.') ?></div>
+                        <div class="bi-kpi-foot">
+                            <span class="bi-badge <?= ($biData['ordersGrowth']['is_positive'] ?? true) ? 'up' : 'down' ?>">
+                                <i class="fa-solid <?= ($biData['ordersGrowth']['is_positive'] ?? true) ? 'fa-arrow-trend-up' : 'fa-arrow-trend-down' ?>"></i>
+                                <?= e($biData['ordersGrowth']['text'] ?? '0%') ?>
+                            </span>
+                            <span>dari <?= number_format((int)($biData['curTotalOrderCount'] ?? 0), 0, ',', '.') ?> pesanan masuk</span>
+                        </div>
+                    </article>
+
+                    <!-- KPI 3: Rata-rata Nilai Transaksi (AOV) -->
+                    <article class="bi-kpi-card orange">
+                        <div class="bi-kpi-head">
+                            <span class="bi-kpi-label">Rata-rata Nilai (AOV)</span>
+                            <div class="bi-kpi-icon"><i class="fa-solid fa-receipt"></i></div>
+                        </div>
+                        <div class="bi-kpi-value">Rp <?= number_format((float)($biData['curAov'] ?? 0), 0, ',', '.') ?></div>
+                        <div class="bi-kpi-foot">
+                            <span class="bi-badge <?= ($biData['aovGrowth']['is_positive'] ?? true) ? 'up' : 'down' ?>">
+                                <i class="fa-solid <?= ($biData['aovGrowth']['is_positive'] ?? true) ? 'fa-arrow-trend-up' : 'fa-arrow-trend-down' ?>"></i>
+                                <?= e($biData['aovGrowth']['text'] ?? '0%') ?>
+                            </span>
+                            <span>per transaksi berhasil</span>
+                        </div>
+                    </article>
+
+                    <!-- KPI 4: Total Pelanggan & Pembeli Aktif -->
+                    <article class="bi-kpi-card blue">
+                        <div class="bi-kpi-head">
+                            <span class="bi-kpi-label">Total Pelanggan</span>
+                            <div class="bi-kpi-icon"><i class="fa-solid fa-users"></i></div>
+                        </div>
+                        <div class="bi-kpi-value"><?= number_format((int)($biData['totalRegisteredCustomers'] ?? 0), 0, ',', '.') ?></div>
+                        <div class="bi-kpi-foot">
+                            <span class="bi-badge up"><i class="fa-solid fa-user-tag"></i> <?= e($biData['customerConversionRate'] ?? 0) ?>%</span>
+                            <span><?= number_format((int)($biData['activeBuyingCustomersCount'] ?? 0), 0, ',', '.') ?> mitra bertransaksi</span>
+                        </div>
+                    </article>
+
+                    <!-- KPI 5: Pertumbuhan Penjualan & Tingkat Repeat Order -->
+                    <article class="bi-kpi-card purple">
+                        <div class="bi-kpi-head">
+                            <span class="bi-kpi-label">Pertumbuhan Penjualan</span>
+                            <div class="bi-kpi-icon"><i class="fa-solid fa-arrow-up-right-dots"></i></div>
+                        </div>
+                        <div class="bi-kpi-value"><?= e($biData['revenueGrowth']['text'] ?? '0%') ?></div>
+                        <div class="bi-kpi-foot">
+                            <span class="bi-badge neutral"><i class="fa-solid fa-repeat"></i> <?= e($biData['repeatOrderRate'] ?? 0) ?>%</span>
+                            <span>repeat order rate mitra</span>
+                        </div>
+                    </article>
+                </div>
+
+                <!-- 3. Grafik Tren Penjualan & Transaksi dengan Switcher Interval -->
+                <article class="bi-chart-card">
+                    <div class="bi-card-head">
+                        <div>
+                            <h3 class="bi-card-title"><i class="fa-solid fa-chart-area" style="color:#5b8121;"></i> Tren Pendapatan &amp; Frekuensi Transaksi</h3>
+                            <p class="bi-card-sub">Grafik historis perkembangan omset dan jumlah transaksi berhasil secara periodik.</p>
+                        </div>
+                        <!-- Interval Switcher Tabs -->
+                        <div class="bi-tab-switcher" role="tablist">
+                            <button type="button" class="bi-tab-btn active" data-interval="daily" onclick="setSalesInterval('daily')">Harian (30 Hari)</button>
+                            <button type="button" class="bi-tab-btn" data-interval="weekly" onclick="setSalesInterval('weekly')">Mingguan (8 Mgg)</button>
+                            <button type="button" class="bi-tab-btn" data-interval="monthly" onclick="setSalesInterval('monthly')">Bulanan (12 Bln)</button>
+                            <button type="button" class="bi-tab-btn" data-interval="yearly" onclick="setSalesInterval('yearly')">Tahunan</button>
+                        </div>
+                    </div>
+                    <div class="bi-chart-wrapper">
+                        <canvas id="biSalesTrendChart"></canvas>
+                    </div>
+                </article>
+
+                <!-- 4. Grid Analisis Transaksi (Status Donut & Metode Pembayaran Bar) -->
+                <div class="bi-grid-2col">
+                    <!-- Diagram Status Transaksi -->
+                    <article class="bi-chart-card">
+                        <div class="bi-card-head">
+                            <div>
+                                <h3 class="bi-card-title"><i class="fa-solid fa-chart-pie" style="color:#e48e1e;"></i> Analisis Status Pesanan</h3>
+                                <p class="bi-card-sub">Distribusi pesanan berhasil, diproses, menunggu, dan dibatalkan.</p>
+                            </div>
+                            <span class="welcome-tag" style="margin:0;font-size:11px;">Periode: <?= e($biData['periodLabel'] ?? '') ?></span>
+                        </div>
+                        <div class="bi-chart-wrapper" style="height:270px;">
+                            <canvas id="biStatusDonutChart"></canvas>
+                        </div>
+                    </article>
+
+                    <!-- Distribusi Metode Pembayaran -->
+                    <article class="bi-chart-card">
+                        <div class="bi-card-head">
+                            <div>
+                                <h3 class="bi-card-title"><i class="fa-solid fa-credit-card" style="color:#2563eb;"></i> Saluran &amp; Metode Pembayaran</h3>
+                                <p class="bi-card-sub">Perbandingan penggunaan QRIS, Transfer Bank, dan Saluran Lainnya.</p>
+                            </div>
+                        </div>
+                        <div class="bi-chart-wrapper" style="height:270px;">
+                            <canvas id="biPaymentBarChart"></canvas>
+                        </div>
+                    </article>
+                </div>
+
+                <!-- 5. Layanan Terlaris (Ranking Table) -->
+                <article class="bi-chart-card">
+                    <div class="bi-card-head">
+                        <div>
+                            <h3 class="bi-card-title"><i class="fa-solid fa-ranking-star" style="color:#e48e1e;"></i> Ranking Layanan Terlaris (Top Services)</h3>
+                            <p class="bi-card-sub">Peringkat paket layanan digital berdasarkan volume pesanan dan kontribusi omset.</p>
+                        </div>
+                        <span class="bi-badge up"><i class="fa-solid fa-shield-halved"></i> Data Riil Database</span>
+                    </div>
+                    <div class="bi-table-wrap">
+                        <table class="bi-table">
+                            <thead>
+                                <tr>
+                                    <th style="width:50px;text-align:center;">#</th>
+                                    <th>Nama Layanan Digital</th>
+                                    <th>Kategori</th>
+                                    <th style="text-align:center;">Pesanan</th>
+                                    <th style="text-align:right;">Total Pendapatan</th>
+                                    <th style="width:200px;">Kontribusi Omset</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php 
+                                $rankIdx = 1;
+                                $maxRev = max(1.0, (float)($biData['maxServiceRev'] ?? 1.0));
+                                foreach (($biData['serviceRanking'] ?? []) as $svc): 
+                                    $pct = round(((float)$svc['revenue'] / $maxRev) * 100);
+                                    $badgeClass = $rankIdx === 1 ? 'bi-rank-1' : ($rankIdx === 2 ? 'bi-rank-2' : ($rankIdx === 3 ? 'bi-rank-3' : ''));
+                                ?>
+                                <tr>
+                                    <td style="text-align:center;">
+                                        <span class="bi-rank-badge <?= $badgeClass ?>"><?= $rankIdx ?></span>
+                                    </td>
+                                    <td>
+                                        <strong><?= e($svc['name']) ?></strong>
+                                    </td>
+                                    <td>
+                                        <span class="welcome-tag" style="margin:0;padding:2px 8px;font-size:10.5px;"><?= e($svc['category']) ?></span>
+                                    </td>
+                                    <td style="text-align:center;">
+                                        <strong><?= number_format((int)$svc['order_count'], 0, ',', '.') ?></strong> pesanan
+                                    </td>
+                                    <td style="text-align:right;font-weight:700;color:#0f172a;">
+                                        Rp <?= number_format((float)$svc['revenue'], 0, ',', '.') ?>
+                                    </td>
+                                    <td>
+                                        <div style="display:flex;align-items:center;justify-content:space-between;font-size:11px;color:#64748b;margin-bottom:3px;">
+                                            <span><?= $pct ?>%</span>
+                                        </div>
+                                        <div class="bi-progress-bar">
+                                            <div class="bi-progress-fill" style="width: <?= min(100, max(4, $pct)) ?>%;"></div>
+                                        </div>
+                                    </td>
+                                </tr>
+                                <?php $rankIdx++; endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                </article>
+
+                <!-- 6. Grid Performa Pelanggan & Performa Website -->
+                <div class="bi-grid-2col">
+                    <!-- Performa Pelanggan -->
+                    <article class="bi-chart-card">
+                        <div class="bi-card-head">
+                            <div>
+                                <h3 class="bi-card-title"><i class="fa-solid fa-user-group" style="color:#5b8121;"></i> Performa &amp; Loyalitas Pelanggan</h3>
+                                <p class="bi-card-sub">Pertumbuhan pendaftar baru vs pelanggan yang aktif bertransaksi.</p>
+                            </div>
+                        </div>
+                        <div class="bi-engagement-grid" style="grid-template-columns: 1fr 1fr;">
+                            <div class="bi-engage-box">
+                                <div class="bi-engage-icon" style="background:#eff5e5;color:#5b8121;"><i class="fa-solid fa-user-plus"></i></div>
+                                <div>
+                                    <div class="bi-engage-val"><?= number_format((int)($biData['totalRegisteredCustomers'] ?? 0), 0, ',', '.') ?></div>
+                                    <div class="bi-engage-label">Mitra Terdaftar</div>
+                                </div>
+                            </div>
+                            <div class="bi-engage-box">
+                                <div class="bi-engage-icon" style="background:#ecfdf5;color:#059669;"><i class="fa-solid fa-basket-shopping"></i></div>
+                                <div>
+                                    <div class="bi-engage-val"><?= number_format((int)($biData['activeBuyingCustomersCount'] ?? 0), 0, ',', '.') ?></div>
+                                    <div class="bi-engage-label">Mitra Bertransaksi</div>
+                                </div>
+                            </div>
+                            <div class="bi-engage-box">
+                                <div class="bi-engage-icon" style="background:#fff7ed;color:#e48e1e;"><i class="fa-solid fa-arrows-rotate"></i></div>
+                                <div>
+                                    <div class="bi-engage-val"><?= number_format((int)($biData['repeatCustomersCount'] ?? 0), 0, ',', '.') ?></div>
+                                    <div class="bi-engage-label">Mitra Repeat Order</div>
+                                </div>
+                            </div>
+                            <div class="bi-engage-box">
+                                <div class="bi-engage-icon" style="background:#f5f3ff;color:#7c3aed;"><i class="fa-solid fa-percent"></i></div>
+                                <div>
+                                    <div class="bi-engage-val"><?= e($biData['repeatOrderRate'] ?? 0) ?>%</div>
+                                    <div class="bi-engage-label">Rasio Pembelian Ulang</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div style="font-size:11.5px;color:#64748b;line-height:1.5;">
+                            <i class="fa-solid fa-circle-info" style="color:#5b8121;"></i> Sebanyak <strong><?= e($biData['customerConversionRate'] ?? 0) ?>%</strong> dari total mitra hidroponik terdaftar telah melakukan pembelian paket layanan digital.
+                        </div>
+                    </article>
+
+                    <!-- Performa Website (Berdasarkan Data Aktual Database) -->
+                    <article class="bi-chart-card">
+                        <div class="bi-card-head">
+                            <div>
+                                <h3 class="bi-card-title"><i class="fa-solid fa-globe" style="color:#2563eb;"></i> Performa Website &amp; Interaksi</h3>
+                                <p class="bi-card-sub">Statistik kunjungan artikel, konsultasi, dan profil usaha dari database.</p>
+                            </div>
+                        </div>
+                        <div class="bi-engagement-grid" style="grid-template-columns: 1fr 1fr;">
+                            <div class="bi-engage-box">
+                                <div class="bi-engage-icon" style="background:#eff6ff;color:#2563eb;"><i class="fa-solid fa-eye"></i></div>
+                                <div>
+                                    <div class="bi-engage-val"><?= number_format((int)($biData['totalArticleViews'] ?? 0), 0, ',', '.') ?></div>
+                                    <div class="bi-engage-label">Pembaca Artikel</div>
+                                </div>
+                            </div>
+                            <div class="bi-engage-box">
+                                <div class="bi-engage-icon" style="background:#ecfdf5;color:#059669;"><i class="fa-solid fa-comments"></i></div>
+                                <div>
+                                    <div class="bi-engage-val"><?= number_format((int)($biData['totalConsultationsCount'] ?? 0), 0, ',', '.') ?></div>
+                                    <div class="bi-engage-label">Sesi Konsultasi</div>
+                                </div>
+                            </div>
+                            <div class="bi-engage-box">
+                                <div class="bi-engage-icon" style="background:#fdf4ff;color:#c026d3;"><i class="fa-solid fa-message"></i></div>
+                                <div>
+                                    <div class="bi-engage-val"><?= number_format((int)($biData['totalChatMessagesCount'] ?? 0), 0, ',', '.') ?></div>
+                                    <div class="bi-engage-label">Pesan Diskusi</div>
+                                </div>
+                            </div>
+                            <div class="bi-engage-box">
+                                <div class="bi-engage-icon" style="background:#eff5e5;color:#5b8121;"><i class="fa-solid fa-id-card"></i></div>
+                                <div>
+                                    <div class="bi-engage-val"><?= e($biData['profileCompletionRate'] ?? 0) ?>%</div>
+                                    <div class="bi-engage-label">Profil Usaha Lengkap</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Transparansi Tracking Notice -->
+                        <div class="bi-tracking-notice">
+                            <i class="fa-solid fa-shield-halved" style="font-size:16px;margin-top:2px;"></i>
+                            <div>
+                                <strong>Transparansi Data Web Analytics:</strong> Metrik di atas dihitung secara akurat dari data transaksi, pembaca artikel, dan percakapan di database Supabase/MySQL. Untuk pelacakan kunjungan pengunjung anonim eksternal (pageviews/bounce rate), Anda dapat memasang Google Analytics 4 (GA4) atau Vercel Web Analytics.
+                            </div>
+                        </div>
+                    </article>
+                </div>
+
+                <!-- 7. Ringkasan Laporan & Komparasi Periode (Summary Report) -->
+                <article class="bi-chart-card">
+                    <div class="bi-card-head">
+                        <div>
+                            <h3 class="bi-card-title"><i class="fa-solid fa-table-list" style="color:#5b8121;"></i> Ringkasan Laporan Komparasi Periode</h3>
+                            <p class="bi-card-sub">Perbandingan performa indikator bisnis periode saat ini terhadap periode pembanding.</p>
+                        </div>
+                        <span class="welcome-tag" style="margin:0;"><i class="fa-solid fa-code-compare"></i> <?= e($biData['periodLabel'] ?? '') ?> <?= e($biData['comparisonLabel'] ?? '') ?></span>
+                    </div>
+                    <div class="bi-table-wrap">
+                        <table class="bi-table">
+                            <thead>
+                                <tr>
+                                    <th>Indikator Kinerja (KPI)</th>
+                                    <th>Keterangan / Ruang Lingkup</th>
+                                    <th>Periode Saat Ini</th>
+                                    <th>Periode Pembanding</th>
+                                    <th style="text-align:center;">Perubahan (%)</th>
+                                    <th style="text-align:center;">Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php foreach (($biData['comparisonRows'] ?? []) as $cRow): ?>
+                                <tr>
+                                    <td>
+                                        <div style="display:flex;align-items:center;gap:9px;font-weight:700;">
+                                            <span class="bi-engage-icon" style="width:30px;height:30px;font-size:12px;background:#f8fafc;color:#5b8121;">
+                                                <i class="fa-solid <?= e($cRow['icon']) ?>"></i>
+                                            </span>
+                                            <span><?= e($cRow['metric']) ?></span>
+                                        </div>
+                                    </td>
+                                    <td style="color:#64748b;font-size:11.5px;"><?= e($cRow['note']) ?></td>
+                                    <td><strong style="color:#0f172a;"><?= e($cRow['cur']) ?></strong></td>
+                                    <td style="color:#64748b;"><?= e($cRow['prev']) ?></td>
+                                    <td style="text-align:center;">
+                                        <span class="bi-badge <?= ($cRow['growth']['is_positive'] ?? true) ? 'up' : 'down' ?>">
+                                            <i class="fa-solid <?= ($cRow['growth']['is_positive'] ?? true) ? 'fa-arrow-trend-up' : 'fa-arrow-trend-down' ?>"></i>
+                                            <?= e($cRow['growth']['text'] ?? '0%') ?>
+                                        </span>
+                                    </td>
+                                    <td style="text-align:center;">
+                                        <?php if (($cRow['growth']['is_positive'] ?? true)): ?>
+                                            <span style="color:#059669;font-weight:700;font-size:11px;"><i class="fa-solid fa-circle-check"></i> Meningkat</span>
+                                        <?php else: ?>
+                                            <span style="color:#dc2626;font-weight:700;font-size:11px;"><i class="fa-solid fa-circle-exclamation"></i> Menurun</span>
+                                        <?php endif; ?>
+                                    </td>
+                                </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                </article>
+
+            </section>
+
+            <!-- ========================================================== -->
+            <!-- RINGKASAN DATA & TABEL BAWAAN DASHBOARD (DIPERTAHANKAN)    -->
+            <!-- ========================================================== -->
             <section class="welcome-row">
                 <div>
-                    <span class="eyebrow">BALLA’ FRESH · ADMIN PANEL</span>
-                    <h1>Dashboard Overview</h1>
-                    <p>Selamat datang, <?= e($adminName) ?>. Pantau ringkasan bisnis dan aktivitas website dari satu tempat.</p>
+                    <span class="eyebrow">RINGKASAN OPERASIONAL</span>
+                    <h2>Aktivitas &amp; Pengelolaan Berjalan</h2>
+                    <p>Daftar pesanan baru masuk dan riwayat interaksi pengguna terbaru.</p>
                 </div>
                 <span class="welcome-tag"><span></span> Sistem terhubung ke database</span>
             </section>
+
             <section class="stats-grid" aria-label="Ringkasan data" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));">
                 <article class="stat-card"><div class="stat-top"><span class="stat-kicker">Total Pelanggan</span><span class="stat-icon"><i class="fa-solid fa-users"></i></span></div><div class="stat-value"><?= number_format($customerCount, 0, ',', '.') ?></div><div class="stat-foot"><i class="fa-solid fa-database"></i> Akun tersimpan</div></article>
                 <article class="stat-card"><div class="stat-top"><span class="stat-kicker">Total Pesanan</span><span class="stat-icon amber"><i class="fa-solid fa-cart-shopping"></i></span></div><div class="stat-value"><?= number_format($orderCounts['all'], 0, ',', '.') ?></div><div class="stat-foot">Seluruh pesanan masuk</div></article>
@@ -2975,6 +4228,237 @@ if (count($nameParts) >= 2) {
                 </div></div></article>
             </section>
 
+            <!-- ========================================================== -->
+            <!-- JAVASCRIPT INISIALISASI CHART.JS DENGAN DATA DATABASE      -->
+            <!-- ========================================================== -->
+            <script>
+            document.addEventListener('DOMContentLoaded', function() {
+                // Datasets dari PHP
+                const biDatasets = {
+                    daily: <?= json_encode($biData['tsDaily'] ?? [], JSON_UNESCAPED_UNICODE) ?>,
+                    weekly: <?= json_encode($biData['tsWeekly'] ?? [], JSON_UNESCAPED_UNICODE) ?>,
+                    monthly: <?= json_encode($biData['tsMonthly'] ?? [], JSON_UNESCAPED_UNICODE) ?>,
+                    yearly: <?= json_encode($biData['tsYearly'] ?? [], JSON_UNESCAPED_UNICODE) ?>
+                };
+
+                const statusData = <?= json_encode($biData['statusDist'] ?? [], JSON_UNESCAPED_UNICODE) ?>;
+                const paymentData = <?= json_encode($biData['paymentDist'] ?? [], JSON_UNESCAPED_UNICODE) ?>;
+
+                // 1. Inisialisasi Grafik Tren Penjualan & Transaksi
+                const ctxSales = document.getElementById('biSalesTrendChart');
+                let salesChart = null;
+
+                if (ctxSales && typeof Chart !== 'undefined') {
+                    const initialDataset = biDatasets.daily;
+                    const labels = Object.values(initialDataset).map(d => d.label);
+                    const revenues = Object.values(initialDataset).map(d => d.revenue);
+                    const orders = Object.values(initialDataset).map(d => d.orders);
+
+                    salesChart = new Chart(ctxSales, {
+                        type: 'line',
+                        data: {
+                            labels: labels,
+                            datasets: [
+                                {
+                                    label: 'Pendapatan (Rp)',
+                                    data: revenues,
+                                    borderColor: '#5b8121',
+                                    backgroundColor: 'rgba(91, 129, 33, 0.12)',
+                                    borderWidth: 2.5,
+                                    fill: true,
+                                    tension: 0.35,
+                                    yAxisID: 'yRev',
+                                    pointBackgroundColor: '#5b8121',
+                                    pointRadius: 3,
+                                    pointHoverRadius: 6
+                                },
+                                {
+                                    label: 'Transaksi Berhasil',
+                                    data: orders,
+                                    borderColor: '#e48e1e',
+                                    backgroundColor: 'rgba(228, 142, 30, 0.08)',
+                                    borderWidth: 2,
+                                    borderDash: [5, 4],
+                                    fill: false,
+                                    tension: 0.35,
+                                    yAxisID: 'yOrders',
+                                    pointBackgroundColor: '#e48e1e',
+                                    pointRadius: 3,
+                                    pointHoverRadius: 5
+                                }
+                            ]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            interaction: {
+                                mode: 'index',
+                                intersect: false
+                            },
+                            plugins: {
+                                legend: {
+                                    position: 'top',
+                                    labels: {
+                                        boxWidth: 12,
+                                        font: { family: 'DM Sans', size: 12, weight: '600' }
+                                    }
+                                },
+                                tooltip: {
+                                    callbacks: {
+                                        label: function(context) {
+                                            if (context.datasetIndex === 0) {
+                                                return ' Pendapatan: Rp ' + new Intl.NumberFormat('id-ID').format(context.parsed.y);
+                                            }
+                                            return ' Transaksi: ' + context.parsed.y + ' pesanan';
+                                        }
+                                    }
+                                }
+                            },
+                            scales: {
+                                x: {
+                                    grid: { display: false },
+                                    ticks: { font: { family: 'DM Sans', size: 10.5 }, maxRotation: 45 }
+                                },
+                                yRev: {
+                                    type: 'linear',
+                                    display: true,
+                                    position: 'left',
+                                    grid: { color: 'rgba(226, 232, 240, 0.7)' },
+                                    ticks: {
+                                        font: { family: 'DM Sans', size: 11 },
+                                        callback: function(value) {
+                                            if (value >= 1000000) return 'Rp ' + (value / 1000000).toFixed(1) + 'M';
+                                            if (value >= 1000) return 'Rp ' + (value / 1000).toFixed(0) + 'k';
+                                            return 'Rp ' + value;
+                                        }
+                                    }
+                                },
+                                yOrders: {
+                                    type: 'linear',
+                                    display: true,
+                                    position: 'right',
+                                    grid: { drawOnChartArea: false },
+                                    ticks: {
+                                        font: { family: 'DM Sans', size: 11 },
+                                        stepSize: 1,
+                                        callback: function(value) { return value + ' tx'; }
+                                    }
+                                }
+                            }
+                        }
+                    });
+                }
+
+                // Global Switcher Interval
+                window.setSalesInterval = function(interval) {
+                    if (!salesChart || !biDatasets[interval]) return;
+                    const ds = biDatasets[interval];
+                    const labels = Object.values(ds).map(d => d.label);
+                    const revenues = Object.values(ds).map(d => d.revenue);
+                    const orders = Object.values(ds).map(d => d.orders);
+
+                    salesChart.data.labels = labels;
+                    salesChart.data.datasets[0].data = revenues;
+                    salesChart.data.datasets[1].data = orders;
+                    salesChart.update();
+
+                    document.querySelectorAll('.bi-tab-btn').forEach(btn => {
+                        btn.classList.toggle('active', btn.getAttribute('data-interval') === interval);
+                    });
+                };
+
+                // 2. Inisialisasi Donut Chart Status Transaksi
+                const ctxStatus = document.getElementById('biStatusDonutChart');
+                if (ctxStatus && typeof Chart !== 'undefined') {
+                    const stLabels = Object.values(statusData).map(d => d.label);
+                    const stCounts = Object.values(statusData).map(d => d.count);
+                    const stColors = Object.values(statusData).map(d => d.color);
+
+                    new Chart(ctxStatus, {
+                        type: 'doughnut',
+                        data: {
+                            labels: stLabels,
+                            datasets: [{
+                                data: stCounts,
+                                backgroundColor: stColors,
+                                borderWidth: 2,
+                                borderColor: '#ffffff',
+                                hoverOffset: 4
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {
+                                legend: {
+                                    position: 'bottom',
+                                    labels: {
+                                        boxWidth: 12,
+                                        font: { family: 'DM Sans', size: 11.5 }
+                                    }
+                                },
+                                tooltip: {
+                                    callbacks: {
+                                        label: function(context) {
+                                            const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                                            const val = context.parsed;
+                                            const pct = total > 0 ? ((val / total) * 100).toFixed(1) : 0;
+                                            return ` ${context.label}: ${val} (${pct}%)`;
+                                        }
+                                    }
+                                }
+                            },
+                            cutout: '66%'
+                        }
+                    });
+                }
+
+                // 3. Inisialisasi Bar Chart Metode Pembayaran
+                const ctxPayment = document.getElementById('biPaymentBarChart');
+                if (ctxPayment && typeof Chart !== 'undefined') {
+                    const payLabels = Object.values(paymentData).map(d => d.label);
+                    const payCounts = Object.values(paymentData).map(d => d.count);
+                    const payColors = Object.values(paymentData).map(d => d.color);
+
+                    new Chart(ctxPayment, {
+                        type: 'bar',
+                        data: {
+                            labels: payLabels,
+                            datasets: [{
+                                label: 'Jumlah Transaksi',
+                                data: payCounts,
+                                backgroundColor: payColors,
+                                borderRadius: 8
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {
+                                legend: { display: false },
+                                tooltip: {
+                                    callbacks: {
+                                        label: function(context) {
+                                            return ' ' + context.parsed.y + ' pesanan';
+                                        }
+                                    }
+                                }
+                            },
+                            scales: {
+                                x: {
+                                    grid: { display: false },
+                                    ticks: { font: { family: 'DM Sans', size: 10.5 }, maxRotation: 25 }
+                                },
+                                y: {
+                                    ticks: { stepSize: 1, font: { family: 'DM Sans', size: 11 } },
+                                    grid: { color: 'rgba(226, 232, 240, 0.7)' }
+                                }
+                            }
+                        }
+                    });
+                }
+            });
+            </script>
         <?php elseif ($page === 'orders'): ?>
             <section class="welcome-row">
                 <div>
