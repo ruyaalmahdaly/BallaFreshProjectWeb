@@ -8,6 +8,7 @@ if (ob_get_level() === 0) {
 
 // Exception handler khusus untuk endpoint POST JSON
 if (($_SERVER["REQUEST_METHOD"] ?? '') === "POST") {
+    @ini_set('display_errors', '0');
     set_exception_handler(function(Throwable $e) {
         while (ob_get_level() > 0) {
             ob_end_clean();

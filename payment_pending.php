@@ -82,6 +82,9 @@ function applySettlementSuccess($conn, array &$order, array $stData, string $tra
 
 // 3. Endpoint AJAX: Cek Status Pembayaran Realtime
 if (isset($_GET["action"]) && $_GET["action"] === "check_status") {
+    while (ob_get_level() > 0) {
+        ob_end_clean();
+    }
     header("Content-Type: application/json; charset=utf-8");
 
     // Jika di database sudah tercatat lunas
@@ -207,10 +210,11 @@ if (isMidtransConfigured()) {
     }
 }
 
-// 7. Jika metode Midtrans tetapi belum ada kode pembayaran/QR (misal saat checkout Midtrans gagal/kunci baru dimasukkan),
+// 7. Jika metode Midtrans tetapi belum ada kode pembayaran/QR resmi dari Midtrans Sandbox,
 // generate transaksi Core API untuk order yang sama tanpa membuat pesanan baru
 $requestedRetry = isset($_GET["action"]) && $_GET["action"] === "retry_charge";
-$needsChargeGeneration = (empty($order["payment_code"]) && empty($order["qr_url"]) && $order["payment_method"] === "midtrans");
+$hasInvalidOrMockQr = empty($order["qr_url"]) || strpos((string)$order["qr_url"], "api.qrserver.com") !== false;
+$needsChargeGeneration = ($order["payment_method"] === "midtrans" && empty($order["payment_code"]) && $hasInvalidOrMockQr);
 
 if (($needsChargeGeneration || $requestedRetry) && isMidtransConfigured()) {
     $itStmt = $conn->prepare("SELECT service_id, service_name, quantity, unit_price, subtotal FROM order_items WHERE order_id = ?");
@@ -331,14 +335,18 @@ if ($subMethod === "qris" || $subMethod === "shopeepay") {
     $simulatorUrl = "https://simulator.sandbox.midtrans.com/openapi/va/index";
 }
 
-// Persiapkan displayable QR URL
+// Persiapkan displayable QR URL (Wajib menggunakan URL resmi Midtrans Sandbox agar valid di Simulator)
 $displayQrUrl = !empty($order["qr_url"]) ? (string)$order["qr_url"] : "";
+
+// Jika transaksi sudah tercatat di Midtrans tapi qr_url belum mengarah ke endpoint Midtrans resmi
+if (!empty($order["midtrans_transaction_id"]) && (empty($displayQrUrl) || strpos($displayQrUrl, "api.qrserver.com") !== false)) {
+    $displayQrUrl = "https://api.sandbox.midtrans.com/v2/qris/" . rawurlencode((string)$order["midtrans_transaction_id"]) . "/qr-code";
+    $order["qr_url"] = $displayQrUrl;
+}
+
 if (empty($displayQrUrl)) {
     if (!empty($order["qr_string"])) {
         $displayQrUrl = "https://api.qrserver.com/v1/create-qr-code/?size=300x300&margin=8&data=" . urlencode((string)$order["qr_string"]);
-    } else {
-        $mockQrPayload = "00020101021226670016ID.CO.SHOPEE.WWW01189360091800000000000215" . $order["order_number"] . "520458125303360540" . round((float)$order["total_amount"]) . "5802ID5911Balla Fresh6007Makassar6304ABCD";
-        $displayQrUrl = "https://api.qrserver.com/v1/create-qr-code/?size=300x300&margin=8&data=" . urlencode($mockQrPayload);
     }
 }
 

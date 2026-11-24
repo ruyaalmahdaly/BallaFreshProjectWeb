@@ -19,8 +19,11 @@ function normalizeMidtransKey(?string $key, string $type = 'server'): string {
         return '';
     }
 
+    // Bersihkan tanda petik pembuka/penutup jika tidak sengaja terbawa di env Vercel
+    $clean = trim($clean, "'\"");
+
     if ($type === 'server') {
-        // Hapus duplikasi prefix berulang jika ada
+        // Hapus duplikasi prefix berulang jika ada (misal SB-Mid-server-SB-Mid-server-...)
         while (strpos($clean, 'SB-Mid-server-SB-Mid-server-') === 0) {
             $clean = substr($clean, strlen('SB-Mid-server-'));
         }
@@ -40,12 +43,46 @@ function normalizeMidtransKey(?string $key, string $type = 'server'): string {
     return $clean;
 }
 
+/**
+ * Daftar kandidat Server Key untuk mengatasi kemungkinan perbedaan format prefix (dengan atau tanpa SB-)
+ *
+ * @param string $serverKey
+ * @return array
+ */
+function getMidtransCandidateKeys(string $serverKey): array {
+    $clean = trim($serverKey);
+    if ($clean === '') {
+        return [];
+    }
+
+    $clean = trim($clean, "'\"");
+    $candidates = [$clean];
+
+    if (strpos($clean, 'SB-Mid-server-') === 0) {
+        $withoutSb = substr($clean, 3);
+        $candidates = [$withoutSb, $clean];
+    } elseif (strpos($clean, 'Mid-server-') === 0) {
+        $withSb = 'SB-' . $clean;
+        $candidates = [$clean, $withSb];
+    }
+
+    return array_values(array_unique($candidates));
+}
+
 // --------------------------------------------------------------------------
 // Konfigurasi Kunci API Sandbox (Sesuai Akun Midtrans Sandbox BallaFresh)
 // --------------------------------------------------------------------------
 $localEnv = file_exists(__DIR__ . '/env.local.php') ? (require __DIR__ . '/env.local.php') : [];
-$rawServer = getenv('MIDTRANS_SERVER_KEY') ?: ($_ENV['MIDTRANS_SERVER_KEY'] ?? ($localEnv['MIDTRANS_SERVER_KEY'] ?? ''));
-$rawClient = getenv('MIDTRANS_CLIENT_KEY') ?: ($_ENV['MIDTRANS_CLIENT_KEY'] ?? ($localEnv['MIDTRANS_CLIENT_KEY'] ?? ''));
+
+$rawServer = getenv('MIDTRANS_SERVER_KEY')
+    ?: ($_ENV['MIDTRANS_SERVER_KEY']
+    ?? ($_SERVER['MIDTRANS_SERVER_KEY']
+    ?? ($localEnv['MIDTRANS_SERVER_KEY'] ?? '')));
+
+$rawClient = getenv('MIDTRANS_CLIENT_KEY')
+    ?: ($_ENV['MIDTRANS_CLIENT_KEY']
+    ?? ($_SERVER['MIDTRANS_CLIENT_KEY']
+    ?? ($localEnv['MIDTRANS_CLIENT_KEY'] ?? '')));
 
 if (!defined('MIDTRANS_SERVER_KEY')) {
     define('MIDTRANS_SERVER_KEY', normalizeMidtransKey($rawServer, 'server'));
@@ -57,7 +94,10 @@ if (!defined('MIDTRANS_CLIENT_KEY')) {
 
 // Environment: FALSE untuk Sandbox, TRUE untuk Production
 if (!defined('MIDTRANS_IS_PRODUCTION')) {
-    define('MIDTRANS_IS_PRODUCTION', false);
+    $envProd = getenv('MIDTRANS_IS_PRODUCTION')
+        ?: ($_ENV['MIDTRANS_IS_PRODUCTION']
+        ?? ($_SERVER['MIDTRANS_IS_PRODUCTION'] ?? false));
+    define('MIDTRANS_IS_PRODUCTION', filter_var($envProd, FILTER_VALIDATE_BOOLEAN));
 }
 
 // Pengaturan Sanitasi & 3D Secure
@@ -323,26 +363,40 @@ function createMidtransCoreCharge(
         ];
     }
 
-    $ch = curl_init();
     $rawPayload = json_encode($payload, JSON_UNESCAPED_SLASHES);
+    $keysToTry = getMidtransCandidateKeys(MIDTRANS_SERVER_KEY);
+    $rawResponse = false;
+    $httpCode = 0;
+    $curlErr = '';
 
-    curl_setopt($ch, CURLOPT_URL, MIDTRANS_CHARGE_API_URL);
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, $rawPayload);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 20);
-    curl_setopt($ch, CURLOPT_USERAGENT, 'BallaFresh-CoreAPI/1.0');
-    curl_setopt($ch, CURLOPT_HTTPHEADER, [
-        'Content-Type: application/json',
-        'Accept: application/json',
-        'Authorization: Basic ' . base64_encode(MIDTRANS_SERVER_KEY . ':')
-    ]);
+    foreach ($keysToTry as $candidateKey) {
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL, MIDTRANS_CHARGE_API_URL);
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, $rawPayload);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 20);
+        curl_setopt($ch, CURLOPT_USERAGENT, 'BallaFresh-CoreAPI/1.0');
+        curl_setopt($ch, CURLOPT_HTTPHEADER, [
+            'Content-Type: application/json',
+            'Accept: application/json',
+            'Authorization: Basic ' . base64_encode(trim($candidateKey) . ':')
+        ]);
 
-    $rawResponse = curl_exec($ch);
-    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $curlErr  = curl_error($ch);
-    curl_close($ch);
+        $rawResponse = curl_exec($ch);
+        $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $curlErr  = curl_error($ch);
+        if (PHP_VERSION_ID < 80500 && function_exists('curl_close')) {
+            @curl_close($ch);
+        }
+        unset($ch);
+
+        // Jika bukan 401 Unauthorized, jangan mencoba kandidat kunci lainnya
+        if ($httpCode !== 401) {
+            break;
+        }
+    }
 
     if ($curlErr) {
         return [
@@ -373,10 +427,17 @@ function createMidtransCoreCharge(
 
                 if ($actName === 'generate-qr-code') {
                     $qrUrl = $actUrl;
+                } elseif ($actName === 'generate-qr-code-v2' && empty($qrUrl)) {
+                    $qrUrl = $actUrl;
                 } elseif ($actName === 'deeplink-redirect') {
                     $deeplinkUrl = $actUrl;
                 }
             }
+        }
+
+        // Pastikan QR URL selalu terisi URL resmi Midtrans jika transaksi QRIS berhasil dibuat
+        if (empty($qrUrl) && !empty($transId) && ($subMethod === 'qris' || $paymentType === 'qris')) {
+            $qrUrl = rtrim(MIDTRANS_API_BASE_URL, '/') . '/qris/' . $transId . '/qr-code';
         }
 
         // 2. Bank Transfer VA (BCA, BNI, BRI, Permata)
@@ -447,23 +508,36 @@ function getMidtransTransactionStatus(string $orderId): array {
     }
 
     $url = MIDTRANS_API_BASE_URL . '/' . rawurlencode($orderId) . '/status';
+    $keysToTry = getMidtransCandidateKeys(MIDTRANS_SERVER_KEY);
+    $response = '';
+    $httpCode = 0;
+    $curlErr  = '';
 
-    $ch = curl_init();
-    curl_setopt($ch, CURLOPT_URL, $url);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 30);
-    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 15);
-    curl_setopt($ch, CURLOPT_HTTPHEADER, [
-        'Content-Type: application/json',
-        'Accept: application/json',
-        'Authorization: Basic ' . base64_encode(MIDTRANS_SERVER_KEY . ':')
-    ]);
+    foreach ($keysToTry as $candidateKey) {
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL, $url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 15);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, [
+            'Content-Type: application/json',
+            'Accept: application/json',
+            'Authorization: Basic ' . base64_encode(trim($candidateKey) . ':')
+        ]);
 
-    $response = curl_exec($ch);
-    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $curlErr  = curl_error($ch);
-    curl_close($ch);
+        $response = curl_exec($ch);
+        $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $curlErr  = curl_error($ch);
+        if (PHP_VERSION_ID < 80500 && function_exists('curl_close')) {
+            @curl_close($ch);
+        }
+        unset($ch);
+
+        if ($httpCode !== 401) {
+            break;
+        }
+    }
 
     if ($curlErr) {
         return ['success' => false, 'error' => $curlErr];
@@ -530,23 +604,37 @@ function createMidtransSnapToken(
         ],
     ];
 
-    $ch = curl_init();
-    curl_setopt($ch, CURLOPT_URL, MIDTRANS_SNAP_API_URL);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-    curl_setopt($ch, CURLOPT_TIMEOUT, 30);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload));
-    curl_setopt($ch, CURLOPT_HTTPHEADER, [
-        'Content-Type: application/json',
-        'Accept: application/json',
-        'Authorization: Basic ' . base64_encode(MIDTRANS_SERVER_KEY . ':'),
-    ]);
+    $keysToTry = getMidtransCandidateKeys(MIDTRANS_SERVER_KEY);
+    $rawResponse = '';
+    $httpCode    = 0;
+    $curlErr     = '';
 
-    $rawResponse = curl_exec($ch);
-    $httpCode    = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $curlErr     = curl_error($ch);
-    curl_close($ch);
+    foreach ($keysToTry as $candidateKey) {
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL, MIDTRANS_SNAP_API_URL);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload));
+        curl_setopt($ch, CURLOPT_HTTPHEADER, [
+            'Content-Type: application/json',
+            'Accept: application/json',
+            'Authorization: Basic ' . base64_encode(trim($candidateKey) . ':'),
+        ]);
+
+        $rawResponse = curl_exec($ch);
+        $httpCode    = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $curlErr     = curl_error($ch);
+        if (PHP_VERSION_ID < 80500 && function_exists('curl_close')) {
+            @curl_close($ch);
+        }
+        unset($ch);
+
+        if ($httpCode !== 401) {
+            break;
+        }
+    }
 
     if ($curlErr) {
         return ['success' => false, 'error' => 'cURL error: ' . $curlErr];
@@ -592,26 +680,28 @@ function createMidtransSnapToken(
  * @return bool
  */
 function verifyMidtransSignature(string $orderId, string $statusCode, $grossAmount, string $signatureKey): bool {
-    $serverKey = MIDTRANS_SERVER_KEY;
+    $keysToTry = getMidtransCandidateKeys(MIDTRANS_SERVER_KEY);
 
-    // Midtrans gross_amount pada webhook kadang berupa "10000.00" atau "10000"
-    $hash1 = hash('sha512', $orderId . $statusCode . $grossAmount . $serverKey);
-    if (hash_equals($hash1, $signatureKey)) {
-        return true;
-    }
-
-    // Coba format 2 desimal jika grossAmount numerik
-    if (is_numeric($grossAmount)) {
-        $formatted = number_format((float)$grossAmount, 2, '.', '');
-        $hash2 = hash('sha512', $orderId . $statusCode . $formatted . $serverKey);
-        if (hash_equals($hash2, $signatureKey)) {
+    foreach ($keysToTry as $serverKey) {
+        // Midtrans gross_amount pada webhook kadang berupa "10000.00" atau "10000"
+        $hash1 = hash('sha512', $orderId . $statusCode . $grossAmount . $serverKey);
+        if (hash_equals($hash1, $signatureKey)) {
             return true;
         }
 
-        $formattedInt = (string)((int)$grossAmount);
-        $hash3 = hash('sha512', $orderId . $statusCode . $formattedInt . $serverKey);
-        if (hash_equals($hash3, $signatureKey)) {
-            return true;
+        // Coba format 2 desimal jika grossAmount numerik
+        if (is_numeric($grossAmount)) {
+            $formatted = number_format((float)$grossAmount, 2, '.', '');
+            $hash2 = hash('sha512', $orderId . $statusCode . $formatted . $serverKey);
+            if (hash_equals($hash2, $signatureKey)) {
+                return true;
+            }
+
+            $formattedInt = (string)((int)$grossAmount);
+            $hash3 = hash('sha512', $orderId . $statusCode . $formattedInt . $serverKey);
+            if (hash_equals($hash3, $signatureKey)) {
+                return true;
+            }
         }
     }
 
