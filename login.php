@@ -13,7 +13,7 @@ $email = '';
 
 // Membuat token CSRF.
 if (empty($_SESSION['login_csrf'])) {
-    $_SESSION['login_csrf'] = bin2hex(random_bytes(32));
+    $_SESSION['login_csrf'] = function_exists('generate_csrf_token') ? generate_csrf_token() : bin2hex(random_bytes(32));
 }
 
 // Proses login.
@@ -35,10 +35,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         ? $csrfInput
         : '';
 
-    if (
-        !isset($_SESSION['login_csrf']) ||
-        !hash_equals($_SESSION['login_csrf'], $csrf)
-    ) {
+    $isCsrfValid = false;
+    if (function_exists('verify_csrf_token') && verify_csrf_token($csrf)) {
+        $isCsrfValid = true;
+    } elseif (!empty($_SESSION['login_csrf']) && hash_equals($_SESSION['login_csrf'], $csrf)) {
+        $isCsrfValid = true;
+    }
+
+    if (!$isCsrfValid) {
         $error = 'Sesi formulir berakhir. Muat ulang halaman dan coba lagi.';
 
     } elseif (

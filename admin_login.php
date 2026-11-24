@@ -13,18 +13,23 @@ $email = '';
 
 // Token keamanan CSRF.
 if (empty($_SESSION['admin_login_csrf'])) {
-    $_SESSION['admin_login_csrf'] = bin2hex(random_bytes(32));
+    $_SESSION['admin_login_csrf'] = function_exists('generate_csrf_token') ? generate_csrf_token() : bin2hex(random_bytes(32));
 }
 
 // Proses login admin.
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $email = strtolower(trim($_POST['email'] ?? ''));
-    $password = $_POST['password'] ?? '';
-    $csrf = $_POST['csrf'] ?? '';
+    $password = (string) ($_POST['password'] ?? '');
+    $csrf = (string) ($_POST['csrf'] ?? '');
 
-    if (
-        !hash_equals($_SESSION['admin_login_csrf'], $csrf)
-    ) {
+    $isCsrfValid = false;
+    if (function_exists('verify_csrf_token') && verify_csrf_token($csrf)) {
+        $isCsrfValid = true;
+    } elseif (!empty($_SESSION['admin_login_csrf']) && hash_equals((string)$_SESSION['admin_login_csrf'], $csrf)) {
+        $isCsrfValid = true;
+    }
+
+    if (!$isCsrfValid) {
         $error = 'Sesi formulir berakhir. Muat ulang halaman dan coba lagi.';
     } elseif (
         !filter_var($email, FILTER_VALIDATE_EMAIL) ||

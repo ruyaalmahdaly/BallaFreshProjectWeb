@@ -144,11 +144,31 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
             ], 422);
         }
 
+        $slugAlias = [
+            'starter-branding' => 1,
+            'ecommerce-grow'   => 2,
+            'full-marketing-scale' => 3,
+            'logo' => 1,
+            'packaging' => 1,
+            'profile' => 2,
+            'ecommerce' => 2,
+            'catalog' => 2,
+            'maintenance' => 3,
+            'content' => 3,
+            'social' => 3,
+            'ads' => 3,
+        ];
+
+        $rawId = $item["id"] ?? null;
         $id = filter_var(
-            $item["id"] ?? null,
+            $rawId,
             FILTER_VALIDATE_INT,
             ["options" => ["min_range" => 1]]
         );
+
+        if ($id === false && is_string($rawId) && isset($slugAlias[strtolower(trim($rawId))])) {
+            $id = $slugAlias[strtolower(trim($rawId))];
+        }
 
         $qty = filter_var(
             $item["qty"] ?? 1,
@@ -229,7 +249,16 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
         $fallbackCatalog = [
             1 => ["id" => 1, "name" => "Paket Starter Branding", "price" => 150000.00],
             2 => ["id" => 2, "name" => "Paket E-Commerce Grow", "price" => 300000.00],
-            3 => ["id" => 3, "name" => "Paket Full Marketing Scale", "price" => 500000.00]
+            3 => ["id" => 3, "name" => "Paket Full Marketing Scale", "price" => 500000.00],
+            4 => ["id" => 4, "name" => "Desain Logo & Identitas Brand", "price" => 750000.00],
+            5 => ["id" => 5, "name" => "Stiker Kemasan & Label Produk", "price" => 350000.00],
+            6 => ["id" => 6, "name" => "Setup Profil & Portofolio Digital", "price" => 250000.00],
+            7 => ["id" => 7, "name" => "Website E-Commerce & Pemesanan", "price" => 1500000.00],
+            8 => ["id" => 8, "name" => "Katalog Produk & Penataan Menu", "price" => 500000.00],
+            9 => ["id" => 9, "name" => "Maintenance & Optimasi Toko", "price" => 300000.00],
+            10 => ["id" => 10, "name" => "Produksi Konten Foto & Video", "price" => 600000.00],
+            11 => ["id" => 11, "name" => "Social Media Management Terpadu", "price" => 1200000.00],
+            12 => ["id" => 12, "name" => "Paid Ads Campaign Terarah", "price" => 850000.00]
         ];
 
         $serviceStmt = null;

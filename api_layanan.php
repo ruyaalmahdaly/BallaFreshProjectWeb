@@ -1,4 +1,7 @@
 <?php
+ob_start();
+ini_set('display_errors', '0');
+
 header("Content-Type: application/json; charset=UTF-8");
 
 require_once __DIR__ . "/db.php";
@@ -88,9 +91,14 @@ if (empty($layanan)) {
     $layanan = $fallbackServices;
 }
 
+while (ob_get_level() > 0) {
+    ob_end_clean();
+}
+
 echo json_encode([
     "success" => true,
     "total" => count($layanan),
     "data" => $layanan
 ], JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
+exit;
 ?>

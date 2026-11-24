@@ -7,41 +7,58 @@ declare(strict_types=1);
 
 $localEnv = file_exists(__DIR__ . '/env.local.php') ? (require __DIR__ . '/env.local.php') : [];
 
+if (!function_exists('get_supabase_env')) {
+    function get_supabase_env(string $key, $default = '') {
+        global $localEnv;
+        $val = getenv($key);
+        if ($val !== false && $val !== '') {
+            return $val;
+        }
+        if (!empty($_ENV[$key])) {
+            return $_ENV[$key];
+        }
+        if (!empty($_SERVER[$key])) {
+            return $_SERVER[$key];
+        }
+        return $localEnv[$key] ?? $default;
+    }
+}
+
 if (!defined('SUPABASE_URL')) {
-    define('SUPABASE_URL', getenv('SUPABASE_URL') ?: ($localEnv['SUPABASE_URL'] ?? 'https://althnabbfrwbnmeqkrrd.supabase.co'));
+    define('SUPABASE_URL', (string)get_supabase_env('SUPABASE_URL', 'https://althnabbfrwbnmeqkrrd.supabase.co'));
 }
 
 if (!defined('SUPABASE_PUBLISHABLE_KEY')) {
-    define('SUPABASE_PUBLISHABLE_KEY', getenv('SUPABASE_PUBLISHABLE_KEY') ?: ($localEnv['SUPABASE_PUBLISHABLE_KEY'] ?? ''));
+    define('SUPABASE_PUBLISHABLE_KEY', (string)get_supabase_env('SUPABASE_PUBLISHABLE_KEY', ''));
 }
 
 if (!defined('SUPABASE_SECRET_KEY')) {
-    define('SUPABASE_SECRET_KEY', getenv('SUPABASE_SECRET_KEY') ?: ($localEnv['SUPABASE_SECRET_KEY'] ?? ''));
+    define('SUPABASE_SECRET_KEY', (string)get_supabase_env('SUPABASE_SECRET_KEY', ''));
 }
 
 if (!defined('SUPABASE_JWKS_URL')) {
-    define('SUPABASE_JWKS_URL', getenv('SUPABASE_JWKS_URL') ?: ($localEnv['SUPABASE_JWKS_URL'] ?? 'https://althnabbfrwbnmeqkrrd.supabase.co/auth/v1/.well-known/jwks.json'));
+    define('SUPABASE_JWKS_URL', (string)get_supabase_env('SUPABASE_JWKS_URL', 'https://althnabbfrwbnmeqkrrd.supabase.co/auth/v1/.well-known/jwks.json'));
 }
 
 // Konfigurasi Database PostgreSQL Supabase
 if (!defined('SUPABASE_DB_HOST')) {
-    define('SUPABASE_DB_HOST', getenv('SUPABASE_DB_HOST') ?: ($localEnv['SUPABASE_DB_HOST'] ?? 'aws-0-ap-southeast-2.pooler.supabase.com'));
+    define('SUPABASE_DB_HOST', (string)get_supabase_env('SUPABASE_DB_HOST', 'aws-0-ap-southeast-2.pooler.supabase.com'));
 }
 
 if (!defined('SUPABASE_DB_PORT')) {
-    define('SUPABASE_DB_PORT', (int)(getenv('SUPABASE_DB_PORT') ?: ($localEnv['SUPABASE_DB_PORT'] ?? 6543)));
+    define('SUPABASE_DB_PORT', (int)get_supabase_env('SUPABASE_DB_PORT', 6543));
 }
 
 if (!defined('SUPABASE_DB_USER')) {
-    define('SUPABASE_DB_USER', getenv('SUPABASE_DB_USER') ?: ($localEnv['SUPABASE_DB_USER'] ?? 'postgres.althnabbfrwbnmeqkrrd'));
+    define('SUPABASE_DB_USER', (string)get_supabase_env('SUPABASE_DB_USER', 'postgres.althnabbfrwbnmeqkrrd'));
 }
 
 if (!defined('SUPABASE_DB_NAME')) {
-    define('SUPABASE_DB_NAME', getenv('SUPABASE_DB_NAME') ?: ($localEnv['SUPABASE_DB_NAME'] ?? 'postgres'));
+    define('SUPABASE_DB_NAME', (string)get_supabase_env('SUPABASE_DB_NAME', 'postgres'));
 }
 
 if (!defined('SUPABASE_DB_PASS')) {
-    define('SUPABASE_DB_PASS', getenv('SUPABASE_DB_PASS') ?: ($localEnv['SUPABASE_DB_PASS'] ?? ''));
+    define('SUPABASE_DB_PASS', (string)get_supabase_env('SUPABASE_DB_PASS', ''));
 }
 
 /**
@@ -56,9 +73,10 @@ if (!defined('SUPABASE_DB_PASS')) {
 function supabaseRestRequest(string $endpoint, string $method = 'GET', ?array $payload = null, array $headers = []): array {
     $url = rtrim(SUPABASE_URL, '/') . '/rest/v1/' . ltrim($endpoint, '/');
 
+    $apiKey = !empty(SUPABASE_SECRET_KEY) ? SUPABASE_SECRET_KEY : SUPABASE_PUBLISHABLE_KEY;
     $defaultHeaders = [
-        'apikey: ' . SUPABASE_SECRET_KEY,
-        'Authorization: Bearer ' . SUPABASE_SECRET_KEY,
+        'apikey: ' . $apiKey,
+        'Authorization: Bearer ' . $apiKey,
         'Content-Type: application/json',
         'Prefer: return=representation'
     ];

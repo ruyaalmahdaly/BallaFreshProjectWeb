@@ -8,7 +8,61 @@ declare(strict_types=1);
  */
 
 // Kunci rahasia untuk menandatangani HMAC cookie session (agar data tidak dapat dimanipulasi client)
-$sessionSecret = getenv('SUPABASE_SECRET_KEY') ?: 'ballafresh_secure_session_hmac_secret_2026_salt';
+$sessionSecret = getenv('SUPABASE_SECRET_KEY')
+    ?: ($_ENV['SUPABASE_SECRET_KEY']
+    ?? ($_SERVER['SUPABASE_SECRET_KEY']
+    ?? 'ballafresh_secure_session_hmac_secret_2026_salt'));
+
+function get_session_secret(): string {
+    global $sessionSecret;
+    if (!empty($sessionSecret)) {
+        return (string)$sessionSecret;
+    }
+    return getenv('SUPABASE_SECRET_KEY')
+        ?: ($_ENV['SUPABASE_SECRET_KEY']
+        ?? ($_SERVER['SUPABASE_SECRET_KEY']
+        ?? 'ballafresh_secure_session_hmac_secret_2026_salt'));
+}
+
+/**
+ * Generate stateless HMAC-signed CSRF token
+ */
+function generate_csrf_token(): string {
+    $random = bin2hex(random_bytes(16));
+    $timestamp = time();
+    $data = $random . '|' . $timestamp;
+    $sig = hash_hmac('sha256', $data, get_session_secret());
+    return $data . '|' . $sig;
+}
+
+/**
+ * Verify CSRF token (supports stateless HMAC token & session register_csrf)
+ */
+function verify_csrf_token(?string $token, int $maxAge = 7200): bool {
+    if (empty($token) || !is_string($token)) {
+        return false;
+    }
+
+    // 1. Cek kecocokan session register_csrf jika ada
+    if (!empty($_SESSION['register_csrf']) && hash_equals((string)$_SESSION['register_csrf'], $token)) {
+        return true;
+    }
+
+    // 2. Cek token HMAC stateless
+    $parts = explode('|', $token);
+    if (count($parts) === 3) {
+        [$random, $timestamp, $sig] = $parts;
+        $time = (int)$timestamp;
+        if ($time > 0 && (time() - $time) <= $maxAge && (time() - $time) >= -300) {
+            $expectedSig = hash_hmac('sha256', $random . '|' . $timestamp, get_session_secret());
+            if (hash_equals($expectedSig, $sig)) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
 
 // Tentukan path session lokal (untuk fallback)
 $sessionPath = null;
@@ -66,6 +120,7 @@ function sync_session_cookie(): void {
         'user_id', 'user_name', 'user_email',
         'admin_id', 'admin_name', 'admin_email',
         'temp_register', 'registration_pending_id',
+        'register_csrf', 'login_csrf', 'admin_login_csrf',
         'cart'
     ];
 
