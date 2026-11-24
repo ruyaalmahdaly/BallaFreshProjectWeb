@@ -23,11 +23,14 @@ if (empty($_SESSION['admin_id'])) {
 
 $adminId = (int) $_SESSION['admin_id'];
 $adminName = (string) ($_SESSION['admin_name'] ?? 'Administrator');
+$adminIsOwner = (int) ($_SESSION['admin_is_owner'] ?? 0);
+$adminManageMessage = '';
+$adminManageMessageType = 'success';
 
 $adminEmail = '';
 
 $page = (string) ($_GET['page'] ?? 'dashboard');
-$allowedPages = ['dashboard', 'orders', 'customers', 'businesses', 'consultations', 'activity', 'agency', 'articles', 'settings'];
+$allowedPages = ['dashboard', 'orders', 'customers', 'businesses', 'consultations', 'activity', 'agency', 'articles', 'admins', 'settings'];
 if (!in_array($page, $allowedPages, true)) {
     $page = 'dashboard';
 }
@@ -40,6 +43,7 @@ $pageTitles = [
     'activity' => 'Aktivitas Terbaru',
     'agency' => 'Operasional Agency',
     'articles' => 'Kelola Artikel & Edukasi',
+    'admins' => 'Kelola Akses Administrator',
     'settings' => 'Pengaturan & Kebijakan'
 ];
 $pageTitle = $pageTitles[$page];
@@ -47,6 +51,11 @@ $pageTitle = $pageTitles[$page];
 // CSRF token untuk aksi pengelolaan pesanan.
 if (empty($_SESSION['order_status_csrf'])) {
     $_SESSION['order_status_csrf'] = bin2hex(random_bytes(32));
+}
+
+// CSRF token untuk pengelolaan akun admin.
+if (empty($_SESSION['admin_manage_csrf'])) {
+    $_SESSION['admin_manage_csrf'] = bin2hex(random_bytes(32));
 }
 
 $orderActionMessage = '';
@@ -108,6 +117,261 @@ if ($stmt) {
     $adminName = (string) $adminRow['name'];
     $adminEmail = (string) $adminRow['email'];
     $_SESSION['admin_is_owner'] = (int) $adminRow['is_owner'];
+    $adminIsOwner = (int) $adminRow['is_owner'];
+}
+
+// -------------------------------------------------------------------------
+// REAL-TIME ONLINE TRACKING: Perbarui timestamp aktif admin yang sedang login
+// -------------------------------------------------------------------------
+try {
+    $nowMakassar = (new DateTime('now', new DateTimeZone('Asia/Makassar')))->format('Y-m-d H:i:s');
+    $upAct = $conn->prepare("UPDATE admins SET last_active_at = ? WHERE id = ?");
+    if ($upAct) {
+        $upAct->bind_param("si", $nowMakassar, $adminId);
+        $upAct->execute();
+        $upAct->close();
+    }
+} catch (Throwable $e) {}
+
+// -------------------------------------------------------------------------
+// HELPER: Format status online / offline real-time administrator
+// -------------------------------------------------------------------------
+if (!function_exists('formatAdminOnlineStatus')) {
+    function formatAdminOnlineStatus(?string $lastActiveAt): array {
+        if (empty($lastActiveAt)) {
+            return [
+                'is_online' => false,
+                'status_type' => 'never',
+                'badge_class' => 'offline',
+                'label' => 'Belum Pernah Aktif',
+                'time_text' => 'Belum pernah login',
+                'dot_color' => '#94a3b8'
+            ];
+        }
+
+        $tz = new DateTimeZone('Asia/Makassar');
+        $now = new DateTime('now', $tz);
+        try {
+            $act = new DateTime($lastActiveAt, $tz);
+        } catch (Throwable $e) {
+            return [
+                'is_online' => false,
+                'status_type' => 'unknown',
+                'badge_class' => 'offline',
+                'label' => 'Waktu Tidak Valid',
+                'time_text' => (string)$lastActiveAt,
+                'dot_color' => '#94a3b8'
+            ];
+        }
+
+        $diffSec = $now->getTimestamp() - $act->getTimestamp();
+        if ($diffSec < 0) {
+            $diffSec = 0;
+        }
+
+        // Aktif dalam 5 menit terakhir (300 detik) dianggap SEDANG ONLINE
+        if ($diffSec <= 300) {
+            return [
+                'is_online' => true,
+                'status_type' => 'online',
+                'badge_class' => 'online',
+                'label' => 'Aktif Sekarang',
+                'time_text' => 'Online di dashboard',
+                'dot_color' => '#10b981'
+            ];
+        }
+
+        // Offline dalam 1 jam terakhir
+        if ($diffSec < 3600) {
+            $mins = max(1, (int)round($diffSec / 60));
+            return [
+                'is_online' => false,
+                'status_type' => 'recent',
+                'badge_class' => 'recent',
+                'label' => "Offline {$mins} mnt lalu",
+                'time_text' => "Terakhir aktif {$mins} menit yang lalu",
+                'dot_color' => '#e48e1e'
+            ];
+        }
+
+        // Offline dalam 24 jam terakhir
+        if ($diffSec < 86400) {
+            $hours = (int)round($diffSec / 3600);
+            return [
+                'is_online' => false,
+                'status_type' => 'offline',
+                'badge_class' => 'offline',
+                'label' => "Offline {$hours} jam lalu",
+                'time_text' => "Terakhir aktif {$hours} jam yang lalu",
+                'dot_color' => '#64748b'
+            ];
+        }
+
+        // Offline 1 hari atau lebih
+        $days = (int)round($diffSec / 86400);
+        return [
+            'is_online' => false,
+            'status_type' => 'offline',
+            'badge_class' => 'offline',
+            'label' => "Offline {$days} hari lalu",
+            'time_text' => "Terakhir aktif pada " . $act->format('d M Y, H:i') . " WITA",
+            'dot_color' => '#94a3b8'
+        ];
+    }
+}
+
+// -------------------------------------------------------------------------
+// PROSES AKSI PENGELOLAAN ADMINISTRATOR (TAMBAH, STATUS, HAPUS)
+// -------------------------------------------------------------------------
+if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && isset($_POST['action'])) {
+    $postedAction = (string)$_POST['action'];
+
+    if (in_array($postedAction, ['create_admin', 'toggle_admin_status', 'delete_admin'], true)) {
+        $csrfToken = (string)($_POST['csrf'] ?? '');
+
+        if (!hash_equals($_SESSION['admin_manage_csrf'] ?? '', $csrfToken)) {
+            $adminManageMessage = 'Sesi formulir berakhir atau token keamanan tidak valid. Silakan coba lagi.';
+            $adminManageMessageType = 'error';
+        } elseif ($adminIsOwner !== 1) {
+            $adminManageMessage = 'Akses ditolak: Hanya Admin Utama (Owner) yang memiliki hak mengelola data administrator.';
+            $adminManageMessageType = 'error';
+        } else {
+            // 1. TAMBAH ADMINISTRATOR BARU
+            if ($postedAction === 'create_admin') {
+                $newAdminName = trim((string)($_POST['name'] ?? ''));
+                $newAdminEmail = strtolower(trim((string)($_POST['email'] ?? '')));
+                $newAdminPhone = trim((string)($_POST['phone'] ?? ''));
+                $newAdminRole = trim((string)($_POST['role'] ?? 'admin'));
+                $newAdminPass = (string)($_POST['password'] ?? '');
+                $newAdminConfirm = (string)($_POST['confirm_password'] ?? '');
+
+                $isOwnerVal = ($newAdminRole === 'owner') ? 1 : 0;
+
+                if ($newAdminName === '' || strlen($newAdminName) > 100) {
+                    $adminManageMessage = 'Mohon masukkan nama lengkap administrator (maksimal 100 karakter).';
+                    $adminManageMessageType = 'error';
+                } elseif (!filter_var($newAdminEmail, FILTER_VALIDATE_EMAIL) || strlen($newAdminEmail) > 150) {
+                    $adminManageMessage = 'Format alamat email tidak valid.';
+                    $adminManageMessageType = 'error';
+                } elseif (strlen($newAdminPass) < 8) {
+                    $adminManageMessage = 'Password akses minimal 8 karakter demi keamanan sistem.';
+                    $adminManageMessageType = 'error';
+                } elseif ($newAdminPass !== $newAdminConfirm) {
+                    $adminManageMessage = 'Password dan konfirmasi password tidak cocok.';
+                    $adminManageMessageType = 'error';
+                } else {
+                    $chk = $conn->prepare("SELECT id FROM admins WHERE email = ? LIMIT 1");
+                    $emailTaken = false;
+                    if ($chk) {
+                        $chk->bind_param("s", $newAdminEmail);
+                        $chk->execute();
+                        if ($chk->get_result()->fetch_assoc()) {
+                            $emailTaken = true;
+                        }
+                        $chk->close();
+                    }
+
+                    if ($emailTaken) {
+                        $adminManageMessage = 'Alamat email sudah terdaftar untuk administrator lain.';
+                        $adminManageMessageType = 'error';
+                    } else {
+                        $hashedPass = password_hash($newAdminPass, PASSWORD_DEFAULT);
+                        $nowDate = (new DateTime('now', new DateTimeZone('Asia/Makassar')))->format('Y-m-d H:i:s');
+
+                        $saved = false;
+                        try {
+                            $inStmt = $conn->prepare("
+                                INSERT INTO admins (name, email, password, is_approved, is_owner, role, phone, created_at, last_active_at)
+                                VALUES (?, ?, ?, 1, ?, ?, ?, ?, NULL)
+                            ");
+                            if ($inStmt) {
+                                $inStmt->bind_param("sssisss", $newAdminName, $newAdminEmail, $hashedPass, $isOwnerVal, $newAdminRole, $newAdminPhone, $nowDate);
+                                $saved = $inStmt->execute();
+                                $inStmt->close();
+                            }
+                        } catch (Throwable $inErr) {}
+
+                        // Fallback jika kolom role / phone belum ditambahkan
+                        if (!$saved) {
+                            try {
+                                $inStmt2 = $conn->prepare("
+                                    INSERT INTO admins (name, email, password, is_approved, is_owner, created_at)
+                                    VALUES (?, ?, ?, 1, ?, ?)
+                                ");
+                                if ($inStmt2) {
+                                    $inStmt2->bind_param("sssis", $newAdminName, $newAdminEmail, $hashedPass, $isOwnerVal, $nowDate);
+                                    $saved = $inStmt2->execute();
+                                    $inStmt2->close();
+                                }
+                            } catch (Throwable $inErr2) {}
+                        }
+
+                        if ($saved) {
+                            $adminManageMessage = "Administrator baru '{$newAdminName}' berhasil didaftarkan dan dapat langsung login.";
+                            $adminManageMessageType = 'success';
+                        } else {
+                            $adminManageMessage = 'Gagal menyimpan administrator baru: ' . ($conn->error ?? 'Koneksi database bermasalah.');
+                            $adminManageMessageType = 'error';
+                        }
+                    }
+                }
+            }
+
+            // 2. TOGGLE STATUS AKTIF / SUSPEND ADMINISTRATOR
+            elseif ($postedAction === 'toggle_admin_status') {
+                $targetId = filter_var($_POST['admin_id'] ?? null, FILTER_VALIDATE_INT);
+                $newStatus = filter_var($_POST['new_status'] ?? 0, FILTER_VALIDATE_INT);
+
+                if (!$targetId) {
+                    $adminManageMessage = 'ID administrator tidak valid.';
+                    $adminManageMessageType = 'error';
+                } elseif ($targetId === $adminId) {
+                    $adminManageMessage = 'Anda tidak dapat menonaktifkan akun Anda sendiri yang sedang aktif.';
+                    $adminManageMessageType = 'error';
+                } else {
+                    $upSt = $conn->prepare("UPDATE admins SET is_approved = ? WHERE id = ?");
+                    if ($upSt) {
+                        $upSt->bind_param("ii", $newStatus, $targetId);
+                        if ($upSt->execute()) {
+                            $statusText = $newStatus === 1 ? 'diaktifkan kembali' : 'ditangguhkan (nonaktif)';
+                            $adminManageMessage = "Hak akses administrator ID #{$targetId} berhasil {$statusText}.";
+                            $adminManageMessageType = 'success';
+                        } else {
+                            $adminManageMessage = 'Gagal memperbarui status administrator: ' . $conn->error;
+                            $adminManageMessageType = 'error';
+                        }
+                        $upSt->close();
+                    }
+                }
+            }
+
+            // 3. HAPUS ADMINISTRATOR
+            elseif ($postedAction === 'delete_admin') {
+                $targetId = filter_var($_POST['admin_id'] ?? null, FILTER_VALIDATE_INT);
+
+                if (!$targetId) {
+                    $adminManageMessage = 'ID administrator tidak valid.';
+                    $adminManageMessageType = 'error';
+                } elseif ($targetId === $adminId) {
+                    $adminManageMessage = 'Anda tidak dapat menghapus akun Anda sendiri.';
+                    $adminManageMessageType = 'error';
+                } else {
+                    $delSt = $conn->prepare("DELETE FROM admins WHERE id = ?");
+                    if ($delSt) {
+                        $delSt->bind_param("i", $targetId);
+                        if ($delSt->execute()) {
+                            $adminManageMessage = "Akun administrator ID #{$targetId} berhasil dihapus dari sistem.";
+                            $adminManageMessageType = 'success';
+                        } else {
+                            $adminManageMessage = 'Gagal menghapus administrator: ' . $conn->error;
+                            $adminManageMessageType = 'error';
+                        }
+                        $delSt->close();
+                    }
+                }
+            }
+        }
+    }
 }
 
 if (!function_exists('e')) {
@@ -1560,6 +1824,43 @@ $pRes = $conn->query("SELECT privacy_policy, terms_conditions, policy_updated_at
 if ($pRes && $pRow = $pRes->fetch_assoc()) {
     $policyContent = array_merge($policyContent, array_filter($pRow, fn($v) => $v !== null));
 }
+
+// Query Data Administrator & Status Aktivitas Real-Time
+$adminList = [];
+$onlineAdminCount = 0;
+$totalAdminsCount = 0;
+$ownerAdminCount = 0;
+
+$aRes = $conn->query("
+    SELECT id, name, email, is_approved, is_owner, created_at, last_active_at,
+           COALESCE(role, IF(is_owner = 1, 'owner', 'admin')) AS role,
+           phone
+    FROM admins
+    ORDER BY is_owner DESC, id ASC
+");
+if (!$aRes) {
+    $aRes = $conn->query("SELECT id, name, email, is_approved, is_owner, created_at, last_active_at FROM admins ORDER BY is_owner DESC, id ASC");
+}
+if (!$aRes) {
+    $aRes = $conn->query("SELECT id, name, email, is_approved, is_owner, created_at FROM admins ORDER BY is_owner DESC, id ASC");
+}
+if ($aRes) {
+    while ($ar = $aRes->fetch_assoc()) {
+        $st = formatAdminOnlineStatus($ar['last_active_at'] ?? null);
+        $ar['online_status'] = $st;
+        if ($st['is_online']) {
+            $onlineAdminCount++;
+        }
+        if ((int)($ar['is_owner'] ?? 0) === 1) {
+            $ownerAdminCount++;
+        }
+        $adminList[] = $ar;
+    }
+    if (method_exists($aRes, 'free')) {
+        $aRes->free();
+    }
+}
+$totalAdminsCount = count($adminList);
 
 $initials = 'BF';
 $nameParts = preg_split('/\s+/', trim($adminName)) ?: [];
@@ -3745,6 +4046,127 @@ if ($page === 'dashboard') {
                 height: 240px;
             }
         }
+
+        /* =========================================================================
+           KELOLA ADMINISTRATOR & REAL-TIME ACTIVITY STYLES
+           ========================================================================= */
+        @keyframes pulseDot {
+            0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
+            70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
+            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+        }
+        .status-dot-online {
+            width: 8.5px;
+            height: 8.5px;
+            border-radius: 50%;
+            background: #10b981;
+            display: inline-block;
+            animation: pulseDot 2s infinite ease-in-out;
+            flex-shrink: 0;
+        }
+        .status-dot-recent {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #e48e1e;
+            display: inline-block;
+            flex-shrink: 0;
+        }
+        .status-dot-offline {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #94a3b8;
+            display: inline-block;
+            flex-shrink: 0;
+        }
+
+        .admin-online-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 3px 9px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 700;
+            line-height: 1;
+        }
+        .admin-online-badge.online {
+            background: #ecfdf5;
+            color: #047857;
+            border: 1px solid #a7f3d0;
+        }
+        .admin-online-badge.recent {
+            background: #fffbeb;
+            color: #b45309;
+            border: 1px solid #fef3c7;
+        }
+        .admin-online-badge.offline {
+            background: #f8fafc;
+            color: #64748b;
+            border: 1px solid #e2e8f0;
+        }
+
+        .admin-role-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 3px 9px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 800;
+            letter-spacing: 0.3px;
+            text-transform: uppercase;
+        }
+        .admin-role-badge.owner {
+            background: #fef3c7;
+            color: #92400e;
+            border: 1px solid #fde68a;
+        }
+        .admin-role-badge.staff {
+            background: #eff5e5;
+            color: #5b8121;
+            border: 1px solid rgba(91, 129, 33, 0.25);
+        }
+
+        .admin-form-panel {
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-radius: 16px;
+            padding: 24px;
+            box-shadow: 0 4px 14px rgba(0,0,0,0.03);
+            margin-bottom: 24px;
+        }
+        .admin-form-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 16px;
+            margin-bottom: 20px;
+        }
+        .admin-form-field label {
+            display: block;
+            font-size: 11.5px;
+            font-weight: 700;
+            color: #475569;
+            margin-bottom: 6px;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+        }
+        .admin-form-field input, .admin-form-field select {
+            width: 100%;
+            padding: 10px 14px;
+            border: 1px solid #cbd5e1;
+            border-radius: 10px;
+            font-size: 13px;
+            color: #1e293b;
+            background: #fff;
+            outline: none;
+            transition: all 0.2s ease;
+        }
+        .admin-form-field input:focus, .admin-form-field select:focus {
+            border-color: #5b8121;
+            box-shadow: 0 0 0 3px rgba(91, 129, 33, 0.15);
+        }
     </style>
 </head>
 <body class="page-<?= e($page) ?>">
@@ -3777,6 +4199,12 @@ if ($page === 'dashboard') {
             <a href="admin_dashboard.php?page=activity" class="side-link <?= $page === 'activity' ? 'active' : '' ?>"><i class="fa-solid fa-clock-rotate-left"></i> Aktivitas Terbaru</a>
             <a href="admin_dashboard.php?page=agency" class="side-link <?= $page === 'agency' ? 'active' : '' ?>"><i class="fa-solid fa-seedling"></i> Operasional Agency</a>
             <a href="admin_dashboard.php?page=articles" class="side-link <?= $page === 'articles' ? 'active' : '' ?>"><i class="fa-solid fa-newspaper"></i> Kelola Artikel</a>
+            <a href="admin_dashboard.php?page=admins" class="side-link <?= $page === 'admins' ? 'active' : '' ?>">
+                <i class="fa-solid fa-user-shield"></i> Kelola Admin
+                <?php if ($onlineAdminCount > 0): ?>
+                    <span style="margin-left:auto;background:rgba(16,185,129,0.22);color:#d1fae5;font-size:10px;font-weight:800;padding:2px 7px;border-radius:99px"><i class="fa-solid fa-circle" style="font-size:7px;color:#10b981;margin-right:2px"></i> <?= $onlineAdminCount ?> On</span>
+                <?php endif; ?>
+            </a>
             <a href="admin_dashboard.php?page=settings" class="side-link <?= $page === 'settings' ? 'active' : '' ?>"><i class="fa-solid fa-shield-halved"></i> Pengaturan &amp; Kebijakan</a>
         </nav>
 
@@ -6736,6 +7164,263 @@ if ($page === 'dashboard') {
                                                     </button>
                                                 </form>
                                             </div>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
+                        </tbody>
+                    </table>
+                </div>
+            </article>
+
+        <?php elseif ($page === 'admins'): ?>
+            <!-- ========================================================== -->
+            <!-- HALAMAN KELOLA AKSES ADMINISTRATOR & STATUS REAL-TIME      -->
+            <!-- ========================================================== -->
+            <section class="welcome-row">
+                <div>
+                    <span class="eyebrow">BALLA’ FRESH · AKSES &amp; KEAMANAN SISTEM</span>
+                    <h1>Kelola Akses Administrator</h1>
+                    <p>Daftar seluruh personil yang memegang hak akses Dashboard Admin Balla' Fresh beserta status aktivitas real-time.</p>
+                </div>
+                <span class="welcome-tag">
+                    <span class="status-dot-online" style="margin-right:4px;"></span>
+                    <?= (int)$onlineAdminCount ?> Admin Sedang Online
+                </span>
+            </section>
+
+            <?php if ($adminManageMessage !== ''): ?>
+                <div class="order-notice <?= e($adminManageMessageType) ?>" style="margin-bottom:20px;"><?= e($adminManageMessage) ?></div>
+            <?php endif; ?>
+
+            <!-- Ringkasan Statistik Administrator -->
+            <div class="order-summary-grid" style="margin-bottom:22px;">
+                <div class="order-mini-stat">
+                    <span>Total Administrator</span>
+                    <strong><?= (int)$totalAdminsCount ?></strong>
+                </div>
+                <div class="order-mini-stat">
+                    <span>Sedang Online</span>
+                    <strong style="color:#059669;display:flex;align-items:center;gap:6px;">
+                        <span class="status-dot-online"></span> <?= (int)$onlineAdminCount ?>
+                    </strong>
+                </div>
+                <div class="order-mini-stat">
+                    <span>Admin Utama (Owner)</span>
+                    <strong style="color:#b45309;"><?= (int)$ownerAdminCount ?></strong>
+                </div>
+                <div class="order-mini-stat">
+                    <span>Admin Operasional</span>
+                    <strong><?= max(0, (int)$totalAdminsCount - (int)$ownerAdminCount) ?></strong>
+                </div>
+            </div>
+
+            <!-- Panel Form Tambah Admin Baru (Khusus Admin Utama / Owner) -->
+            <?php if ($adminIsOwner === 1): ?>
+                <article class="admin-form-panel">
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;flex-wrap:wrap;gap:10px;">
+                        <div>
+                            <h3 style="margin:0 0 4px;font-size:16px;font-weight:800;font-family:'Manrope',sans-serif;color:#1e293b;display:flex;align-items:center;gap:8px;">
+                                <i class="fa-solid fa-user-plus" style="color:#5b8121;"></i> Tambah Administrator Baru
+                            </h3>
+                            <p style="margin:0;font-size:12px;color:#64748b;">Sebagai Admin Utama (Owner), Anda dapat mendaftarkan personil pengelola baru ke dashboard.</p>
+                        </div>
+                        <span class="admin-role-badge owner"><i class="fa-solid fa-crown"></i> Hak Akses Owner</span>
+                    </div>
+
+                    <form method="post" action="admin_dashboard.php?page=admins">
+                        <input type="hidden" name="action" value="create_admin">
+                        <input type="hidden" name="csrf" value="<?= e($_SESSION['admin_manage_csrf'] ?? '') ?>">
+
+                        <div class="admin-form-grid">
+                            <div class="admin-form-field">
+                                <label for="admin_name">Nama Lengkap *</label>
+                                <input type="text" id="admin_name" name="name" required placeholder="Contoh: Ahmad Ridwan" maxlength="100">
+                            </div>
+                            <div class="admin-form-field">
+                                <label for="admin_email">Alamat Email *</label>
+                                <input type="email" id="admin_email" name="email" required placeholder="admin@ballafresh.com" maxlength="150">
+                            </div>
+                            <div class="admin-form-field">
+                                <label for="admin_phone">Nomor Telepon / WhatsApp</label>
+                                <input type="text" id="admin_phone" name="phone" placeholder="Contoh: 081234567890" maxlength="50">
+                            </div>
+                            <div class="admin-form-field">
+                                <label for="admin_role">Peran &amp; Wewenang *</label>
+                                <select id="admin_role" name="role" required>
+                                    <option value="admin" selected>Admin Operasional (Kelola Pesanan, Layanan, Artikel)</option>
+                                    <option value="owner">Admin Utama / Owner (Hak Akses Penuh Sistem)</option>
+                                </select>
+                            </div>
+                            <div class="admin-form-field">
+                                <label for="admin_password">Password Akses Baru *</label>
+                                <input type="password" id="admin_password" name="password" required placeholder="Minimal 8 karakter" minlength="8">
+                            </div>
+                            <div class="admin-form-field">
+                                <label for="admin_confirm_password">Konfirmasi Password *</label>
+                                <input type="password" id="admin_confirm_password" name="confirm_password" required placeholder="Ulangi password" minlength="8">
+                            </div>
+                        </div>
+
+                        <div style="display:flex;justify-content:flex-end;">
+                            <button type="submit" class="btn btn-primary" style="padding:10px 22px;border-radius:10px;font-weight:700;">
+                                <i class="fa-solid fa-user-shield"></i> Daftarkan Akses Admin
+                            </button>
+                        </div>
+                    </form>
+                </article>
+            <?php else: ?>
+                <div class="bi-tracking-notice" style="margin-bottom:24px;">
+                    <i class="fa-solid fa-lock" style="font-size:16px;color:#e48e1e;"></i>
+                    <div>
+                        <strong>Informasi Hak Akses:</strong> Anda masuk sebagai Admin Operasional. Penambahan admin baru dan perubahan hak akses hanya dapat dilakukan oleh <strong>Admin Utama (Owner)</strong>.
+                    </div>
+                </div>
+            <?php endif; ?>
+
+            <!-- Tabel Daftar Seluruh Administrator -->
+            <article class="panel">
+                <div class="panel-head">
+                    <div>
+                        <h2>Daftar Pengelola Agency &amp; Administrator</h2>
+                        <p>Catatan seluruh akun yang memiliki hak akses login ke dashboard admin Balla' Fresh.</p>
+                    </div>
+                    <span class="welcome-tag"><span></span> Zona Waktu: Asia/Makassar (WITA)</span>
+                </div>
+
+                <div class="table-wrap">
+                    <table class="order-table">
+                        <thead>
+                            <tr>
+                                <th>Administrator</th>
+                                <th>Kontak</th>
+                                <th>Peran</th>
+                                <th>Status Real-Time</th>
+                                <th>Hak Akses</th>
+                                <th>Terdaftar Sejak</th>
+                                <th style="text-align:right;">Aksi</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php if (empty($adminList)): ?>
+                                <tr>
+                                    <td colspan="7"><div class="empty">Belum ada data administrator tersimpan.</div></td>
+                                </tr>
+                            <?php else: ?>
+                                <?php foreach ($adminList as $adm): 
+                                    $aId = (int)$adm['id'];
+                                    $isSelf = ($aId === $adminId);
+                                    $isAdmOwner = ((int)($adm['is_owner'] ?? 0) === 1);
+                                    $isApproved = ((int)($adm['is_approved'] ?? 0) === 1);
+                                    $st = $adm['online_status'] ?? formatAdminOnlineStatus($adm['last_active_at'] ?? null);
+
+                                    $aInitials = 'AD';
+                                    $parts = preg_split('/\s+/', trim((string)$adm['name'])) ?: [];
+                                    if (count($parts) >= 2) {
+                                        $aInitials = strtoupper(substr($parts[0], 0, 1) . substr($parts[1], 0, 1));
+                                    } elseif (!empty($parts[0])) {
+                                        $aInitials = strtoupper(substr($parts[0], 0, 2));
+                                    }
+                                ?>
+                                    <tr>
+                                        <!-- Kolom 1: Administrator Avatar & Info -->
+                                        <td>
+                                            <div style="display:flex;align-items:center;gap:12px;">
+                                                <div style="width:38px;height:38px;border-radius:10px;background:<?= $isAdmOwner ? '#fef3c7' : '#eff5e5' ?>;color:<?= $isAdmOwner ? '#b45309' : '#5b8121' ?>;display:grid;place-items:center;font-weight:800;font-size:13px;flex-shrink:0;">
+                                                    <?= e($aInitials) ?>
+                                                </div>
+                                                <div>
+                                                    <div style="display:flex;align-items:center;gap:6px;">
+                                                        <strong><?= e($adm['name']) ?></strong>
+                                                        <?php if ($isSelf): ?>
+                                                            <span style="background:#eff6ff;color:#2563eb;font-size:9.5px;font-weight:800;padding:2px 6px;border-radius:4px;">Anda</span>
+                                                        <?php endif; ?>
+                                                    </div>
+                                                    <small style="color:#64748b;font-size:11px;">ID #<?= $aId ?> · <?= e($adm['email']) ?></small>
+                                                </div>
+                                            </div>
+                                        </td>
+
+                                        <!-- Kolom 2: Kontak -->
+                                        <td>
+                                            <div><?= e($adm['email']) ?></div>
+                                            <?php if (!empty($adm['phone'])): ?>
+                                                <small style="color:#64748b;"><i class="fa-brands fa-whatsapp" style="color:#10b981;"></i> <?= e($adm['phone']) ?></small>
+                                            <?php else: ?>
+                                                <small style="color:#94a3b8;">-</small>
+                                            <?php endif; ?>
+                                        </td>
+
+                                        <!-- Kolom 3: Peran -->
+                                        <td>
+                                            <?php if ($isAdmOwner): ?>
+                                                <span class="admin-role-badge owner">
+                                                    <i class="fa-solid fa-crown"></i> Owner
+                                                </span>
+                                            <?php else: ?>
+                                                <span class="admin-role-badge staff">
+                                                    <i class="fa-solid fa-shield-halved"></i> Operasional
+                                                </span>
+                                            <?php endif; ?>
+                                        </td>
+
+                                        <!-- Kolom 4: Status Real-Time -->
+                                        <td>
+                                            <div style="display:flex;flex-direction:column;gap:3px;">
+                                                <span class="admin-online-badge <?= e($st['badge_class']) ?>">
+                                                    <span class="status-dot-<?= e($st['status_type'] === 'online' ? 'online' : ($st['status_type'] === 'recent' ? 'recent' : 'offline')) ?>"></span>
+                                                    <?= e($st['label']) ?>
+                                                </span>
+                                                <span style="font-size:10.5px;color:#64748b;"><?= e($st['time_text']) ?></span>
+                                            </div>
+                                        </td>
+
+                                        <!-- Kolom 5: Hak Akses -->
+                                        <td>
+                                            <?php if ($isApproved): ?>
+                                                <span class="status-pill completed"><i class="fa-solid fa-check"></i> Disetujui</span>
+                                            <?php else: ?>
+                                                <span class="status-pill cancelled"><i class="fa-solid fa-ban"></i> Ditangguhkan</span>
+                                            <?php endif; ?>
+                                        </td>
+
+                                        <!-- Kolom 6: Tanggal Didaftarkan -->
+                                        <td>
+                                            <span style="color:#64748b;font-size:11.5px;">
+                                                <?= date('d M Y, H:i', strtotime((string)$adm['created_at'])) ?>
+                                            </span>
+                                        </td>
+
+                                        <!-- Kolom 7: Aksi -->
+                                        <td style="text-align:right;">
+                                            <?php if ($adminIsOwner === 1 && !$isSelf): ?>
+                                                <div style="display:inline-flex;gap:6px;align-items:center;">
+                                                    <!-- Toggle Status Disetujui / Ditangguhkan -->
+                                                    <form method="post" action="admin_dashboard.php?page=admins" style="display:inline;" onsubmit="return confirm('Apakah Anda yakin ingin mengubah status aktif administrator ini?')">
+                                                        <input type="hidden" name="action" value="toggle_admin_status">
+                                                        <input type="hidden" name="csrf" value="<?= e($_SESSION['admin_manage_csrf'] ?? '') ?>">
+                                                        <input type="hidden" name="admin_id" value="<?= $aId ?>">
+                                                        <input type="hidden" name="new_status" value="<?= $isApproved ? 0 : 1 ?>">
+                                                        <button type="submit" class="btn btn-light" style="padding:5px 9px;font-size:11.5px;<?= $isApproved ? 'color:#e48e1e' : 'color:#059669' ?>" title="<?= $isApproved ? 'Tangguhkan Akun' : 'Aktifkan Akun' ?>">
+                                                            <i class="fa-solid <?= $isApproved ? 'fa-user-slash' : 'fa-user-check' ?>"></i>
+                                                        </button>
+                                                    </form>
+
+                                                    <!-- Hapus Administrator -->
+                                                    <form method="post" action="admin_dashboard.php?page=admins" style="display:inline;" onsubmit="return confirm('PERINGATAN: Hapus permanen akun administrator <?= e($adm['name']) ?>?')">
+                                                        <input type="hidden" name="action" value="delete_admin">
+                                                        <input type="hidden" name="csrf" value="<?= e($_SESSION['admin_manage_csrf'] ?? '') ?>">
+                                                        <input type="hidden" name="admin_id" value="<?= $aId ?>">
+                                                        <button type="submit" class="btn btn-light" style="padding:5px 9px;font-size:11.5px;color:#ef4444" title="Hapus Administrator">
+                                                            <i class="fa-solid fa-trash"></i>
+                                                        </button>
+                                                    </form>
+                                                </div>
+                                            <?php elseif ($isSelf): ?>
+                                                <span style="font-size:11px;color:#94a3b8;font-style:italic;">Akun aktif Anda</span>
+                                            <?php else: ?>
+                                                <span style="font-size:11px;color:#94a3b8;font-style:italic;">Akses Owner saja</span>
+                                            <?php endif; ?>
                                         </td>
                                     </tr>
                                 <?php endforeach; ?>

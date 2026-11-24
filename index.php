@@ -3062,6 +3062,9 @@ async function checkAuthStatus() {
                 </a>
             `;
         } else {
+            if (typeof isUserLoggedIn !== "undefined" && isUserLoggedIn) {
+                return;
+            }
             document.body.classList.remove("logged-in");
 
             authNav.innerHTML = `

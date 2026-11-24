@@ -80,6 +80,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // Perbarui token keamanan.
             $_SESSION['admin_login_csrf'] = bin2hex(random_bytes(32));
 
+            // Perbarui waktu aktif terakhir (real-time online tracking)
+            try {
+                $nowMakassar = (new DateTime('now', new DateTimeZone('Asia/Makassar')))->format('Y-m-d H:i:s');
+                $upAct = $conn->prepare("UPDATE admins SET last_active_at = ? WHERE id = ?");
+                if ($upAct) {
+                    $upAct->bind_param("si", $nowMakassar, $admin['id']);
+                    $upAct->execute();
+                    $upAct->close();
+                }
+            } catch (Throwable $e) {}
+
             // Sinkronkan cookie session sebelum redirect
             sync_session_cookie();
 

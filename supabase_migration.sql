@@ -38,7 +38,10 @@ CREATE TABLE IF NOT EXISTS public."admins" (
     "password" VARCHAR(255) NOT NULL,
     "created_at" TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
     "is_approved" SMALLINT DEFAULT 0 NOT NULL,
-    "is_owner" SMALLINT DEFAULT 0 NOT NULL
+    "is_owner" SMALLINT DEFAULT 0 NOT NULL,
+    "role" VARCHAR(50) DEFAULT 'admin',
+    "phone" VARCHAR(50),
+    "last_active_at" TIMESTAMPTZ
 );
 
 -- Data for: admins (1 rows)
@@ -645,9 +648,11 @@ CREATE POLICY "Allow full access for service_role and authenticated" ON public."
 COMMIT;
 
 -- Grant full privileges to all roles (mencegah error permission denied pada Supabase)
+GRANT USAGE ON SCHEMA public TO postgres, anon, authenticated, service_role;
 GRANT ALL ON ALL TABLES IN SCHEMA public TO postgres, anon, authenticated, service_role;
 GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO postgres, anon, authenticated, service_role;
 GRANT ALL ON ALL ROUTINES IN SCHEMA public TO postgres, anon, authenticated, service_role;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO postgres, anon, authenticated, service_role;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO postgres, anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON ROUTINES TO postgres, anon, authenticated, service_role;
 

@@ -19,17 +19,16 @@ if (empty($sessionSecret)) {
 }
 
 function get_session_secret(): string {
-    global $sessionSecret;
-    if (!empty($sessionSecret)) {
-        return (string)$sessionSecret;
-    }
+    $raw = '';
     if (function_exists('get_supabase_env')) {
-        return (string)get_supabase_env('SUPABASE_SECRET_KEY', 'ballafresh_secure_session_hmac_secret_2026_salt');
+        $raw = (string)get_supabase_env('SUPABASE_SECRET_KEY', '');
     }
-    return getenv('SUPABASE_SECRET_KEY')
-        ?: ($_ENV['SUPABASE_SECRET_KEY']
-        ?? ($_SERVER['SUPABASE_SECRET_KEY']
-        ?? 'ballafresh_secure_session_hmac_secret_2026_salt'));
+    if ($raw === '') {
+        $raw = (string)(getenv('SUPABASE_SECRET_KEY')
+            ?: ($_ENV['SUPABASE_SECRET_KEY']
+            ?? ($_SERVER['SUPABASE_SECRET_KEY'] ?? '')));
+    }
+    return hash('sha256', $raw . '_ballafresh_secure_session_hmac_2026_salt');
 }
 
 /**
@@ -163,7 +162,7 @@ function sync_session_cookie(): void {
 
     $json = json_encode($payload, JSON_UNESCAPED_UNICODE);
     $encoded = base64_encode($json);
-    $signature = hash_hmac('sha256', $encoded, $sessionSecret);
+    $signature = hash_hmac('sha256', $encoded, get_session_secret());
     $cookieValue = $encoded . '.' . $signature;
 
     setcookie($cookieName, $cookieValue, [
@@ -180,7 +179,6 @@ function sync_session_cookie(): void {
  * Pulihkan data session dari signed cookie jika container serverless belum memiliki data di /tmp
  */
 function restore_session_from_cookie(): void {
-    global $sessionSecret;
     $cookieName = 'bf_session_state';
 
     if (empty($_COOKIE[$cookieName]) || !is_string($_COOKIE[$cookieName])) {
@@ -193,7 +191,7 @@ function restore_session_from_cookie(): void {
     }
 
     [$encoded, $signature] = $parts;
-    $expectedSig = hash_hmac('sha256', $encoded, $sessionSecret);
+    $expectedSig = hash_hmac('sha256', $encoded, get_session_secret());
 
     if (!hash_equals($expectedSig, $signature)) {
         return;

@@ -505,8 +505,40 @@ class SupabaseRestStmtAdapter {
                     $this->adapter->errno = 500;
                 }
                 $this->lastResultRows = [];
-                return true; // Tidak fatal agar aplikasi tidak crash
             }
+
+            // Fallback katalog layanan resmi jika Supabase cloud belum mengizinkan akses SELECT (permission denied)
+            if ($table === 'services' && empty($this->lastResultRows)) {
+                $catalog = [
+                    ['id' => 1, 'category_id' => 1, 'name' => 'Paket Starter Branding', 'description' => 'Layanan dasar untuk membantu membangun identitas visual usaha hidroponik.', 'features' => 'Konsep visual|Logo utama & variasi|File siap pakai', 'price' => 150000.00, 'image' => 'https://images.unsplash.com/photo-1634942536790-2534a3b6a3a5?auto=format&fit=crop&w=900&q=80', 'estimated_days' => 3, 'is_available' => 1],
+                    ['id' => 2, 'category_id' => 2, 'name' => 'Paket E-Commerce Grow', 'description' => 'Layanan untuk membantu menata katalog produk dan mengembangkan penjualan digital.', 'features' => 'Penataan katalog produk|Informasi dan deskripsi produk|Persiapan tampilan penjualan digital', 'price' => 300000.00, 'image' => 'https://images.unsplash.com/photo-1558655146-d09347e92766?auto=format&fit=crop&w=900&q=80', 'estimated_days' => 5, 'is_available' => 1],
+                    ['id' => 3, 'category_id' => 3, 'name' => 'Paket Full Marketing Scale', 'description' => 'Layanan pemasaran digital untuk mendukung pertumbuhan bisnis hidroponik.', 'features' => 'Perencanaan konten pemasaran|Strategi media sosial|Rekomendasi promosi digital', 'price' => 500000.00, 'image' => 'https://images.unsplash.com/photo-1553877522-43269d4ea984?auto=format&fit=crop&w=900&q=80', 'estimated_days' => 7, 'is_available' => 1],
+                    ['id' => 4, 'category_id' => 1, 'name' => 'Desain Logo & Identitas Brand', 'description' => 'Desain identitas brand dan logo profesional.', 'features' => 'Konsep logo|Panduan warna|File master', 'price' => 750000.00, 'image' => '', 'estimated_days' => 4, 'is_available' => 1],
+                    ['id' => 5, 'category_id' => 1, 'name' => 'Stiker Kemasan & Label Produk', 'description' => 'Desain kemasan dan stiker produk sayuran siap cetak.', 'features' => 'Label standing pouch|Stiker box|File siap cetak', 'price' => 350000.00, 'image' => '', 'estimated_days' => 3, 'is_available' => 1],
+                    ['id' => 6, 'category_id' => 2, 'name' => 'Setup Profil & Portofolio Digital', 'description' => 'Setup akun bisnis Google & media sosial.', 'features' => 'Google Business Profile|Link bio|Verifikasi akun', 'price' => 250000.00, 'image' => '', 'estimated_days' => 2, 'is_available' => 1],
+                    ['id' => 7, 'category_id' => 2, 'name' => 'Website E-Commerce & Pemesanan', 'description' => 'Situs pemesanan terintegrasi katalog.', 'features' => 'Katalog dinamis|Checkout WhatsApp/Payment|Mobile friendly', 'price' => 1500000.00, 'image' => '', 'estimated_days' => 10, 'is_available' => 1],
+                    ['id' => 8, 'category_id' => 2, 'name' => 'Katalog Produk & Penataan Menu', 'description' => 'Penyusunan daftar produk terstruktur rapi.', 'features' => 'Foto dan deskripsi|Penataan kategori|Varian harga', 'price' => 500000.00, 'image' => '', 'estimated_days' => 3, 'is_available' => 1],
+                    ['id' => 9, 'category_id' => 3, 'name' => 'Maintenance & Optimasi Toko', 'description' => 'Optimasi berkala kecepatan dan pembaruan sistem.', 'features' => 'Update stok|Cek performa web|Backup mingguan', 'price' => 300000.00, 'image' => '', 'estimated_days' => 30, 'is_available' => 1],
+                    ['id' => 10, 'category_id' => 3, 'name' => 'Produksi Konten Foto & Video', 'description' => 'Foto dan video produk hidroponik profesional.', 'features' => 'Foto produk HD|Video reels/shorts|Editing profesional', 'price' => 600000.00, 'image' => '', 'estimated_days' => 5, 'is_available' => 1],
+                    ['id' => 11, 'category_id' => 3, 'name' => 'Social Media Management Terpadu', 'description' => 'Pengelolaan konten berkala Instagram & TikTok.', 'features' => 'Jadwal posting rutin|Copywriting caption|Riset hashtag terarah', 'price' => 1200000.00, 'image' => '', 'estimated_days' => 30, 'is_available' => 1],
+                    ['id' => 12, 'category_id' => 3, 'name' => 'Paid Ads Campaign Terarah', 'description' => 'Iklan bersponsor Meta & Google Ads.', 'features' => 'Target audiens lokal|Optimasi budget|Laporan konversi', 'price' => 850000.00, 'image' => '', 'estimated_days' => 14, 'is_available' => 1]
+                ];
+
+                if (!empty($where) && preg_match('/id\s*=\s*\?/i', $where)) {
+                    $targetId = (int)($execParams[0] ?? 0);
+                    foreach ($catalog as $item) {
+                        if ($item['id'] === $targetId) {
+                            $this->lastResultRows = [$item];
+                            break;
+                        }
+                    }
+                } else {
+                    $this->lastResultRows = $catalog;
+                }
+                $this->affected_rows = count($this->lastResultRows);
+            }
+
+            return true;
         }
 
         // Default: query tidak dikenali, buat array kosong

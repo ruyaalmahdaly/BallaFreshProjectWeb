@@ -83,6 +83,9 @@ if (!empty($pgPass) && extension_loaded('pdo_pgsql')) {
                     ALTER TABLE public."users" ADD COLUMN IF NOT EXISTS "social_media" VARCHAR(255);
                     ALTER TABLE public."users" ADD COLUMN IF NOT EXISTS "website_url" VARCHAR(255);
                     ALTER TABLE public."users" ADD COLUMN IF NOT EXISTS "business_address" TEXT;
+                    ALTER TABLE public."admins" ADD COLUMN IF NOT EXISTS "last_active_at" TIMESTAMPTZ;
+                    ALTER TABLE public."admins" ADD COLUMN IF NOT EXISTS "role" VARCHAR(50) DEFAULT \'admin\';
+                    ALTER TABLE public."admins" ADD COLUMN IF NOT EXISTS "phone" VARCHAR(50);
                 ');
             } catch (Throwable $alterIgnored) {}
 
