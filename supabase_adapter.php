@@ -414,6 +414,10 @@ class SupabaseRestStmtAdapter {
             } else {
                 $this->error = (string)($res['error'] ?? 'Supabase REST insert failed');
                 $this->errno = 500;
+                if ($this->adapter) {
+                    $this->adapter->error = $this->error;
+                    $this->adapter->errno = 500;
+                }
                 error_log("SupabaseRest insert error on {$table}: " . $this->error);
                 return false;
             }
@@ -454,6 +458,10 @@ class SupabaseRestStmtAdapter {
                 return true;
             } else {
                 $this->error = (string)($res['error'] ?? 'Supabase REST update failed');
+                if ($this->adapter) {
+                    $this->adapter->error = $this->error;
+                    $this->adapter->errno = 500;
+                }
                 return false;
             }
         }
@@ -492,6 +500,10 @@ class SupabaseRestStmtAdapter {
                 return true;
             } else {
                 $this->error = (string)($res['error'] ?? 'Supabase REST select failed');
+                if ($this->adapter) {
+                    $this->adapter->error = $this->error;
+                    $this->adapter->errno = 500;
+                }
                 $this->lastResultRows = [];
                 return true; // Tidak fatal agar aplikasi tidak crash
             }

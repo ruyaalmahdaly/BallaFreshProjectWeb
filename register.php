@@ -170,6 +170,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             }
                         }
 
+                        // Jika tetap tidak tersimpan, berikan pesan error yang jelas dan informatif
+                        if ($userId <= 0) {
+                            $dbErr = (isset($conn->error) && $conn->error !== '') ? $conn->error : '';
+                            if (stripos($dbErr, 'permission denied') !== false) {
+                                throw new Exception('Akses tabel Supabase ditolak (permission denied). Mohon jalankan script SQL GRANT di dashboard Supabase agar data tersimpan.');
+                            }
+                            throw new Exception('Data pendaftaran belum dapat disimpan ke database. ' . ($dbErr ? "Detail: {$dbErr}" : 'Periksa koneksi database.'));
+                        }
+
                         // 2. Simpan Alamat ke Tabel `user_addresses`
                         if ($userId > 0) {
                             try {

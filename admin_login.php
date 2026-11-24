@@ -50,9 +50,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $stmt->execute();
 
         $admin = $stmt->get_result()->fetch_assoc();
+        $stmtErr = $stmt->error ?? '';
+        $connErr = $conn->error ?? '';
         $stmt->close();
 
-        if (
+        if (stripos($stmtErr, 'permission denied') !== false || stripos($connErr, 'permission denied') !== false) {
+            $error = 'Akses tabel admins database ditolak (permission denied di Supabase). Silakan jalankan script SQL GRANT di dashboard Supabase.';
+        } elseif (
             $admin &&
             password_verify($password, $admin['password']) &&
             (int) $admin['is_approved'] === 1

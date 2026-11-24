@@ -7,16 +7,24 @@ declare(strict_types=1);
  * melalui Signed Stateless Session Cookie (HMAC-SHA256) serta fallback session file lokal.
  */
 
+require_once __DIR__ . '/supabase_config.php';
+
 // Kunci rahasia untuk menandatangani HMAC cookie session (agar data tidak dapat dimanipulasi client)
-$sessionSecret = getenv('SUPABASE_SECRET_KEY')
-    ?: ($_ENV['SUPABASE_SECRET_KEY']
-    ?? ($_SERVER['SUPABASE_SECRET_KEY']
-    ?? 'ballafresh_secure_session_hmac_secret_2026_salt'));
+$sessionSecret = function_exists('get_supabase_env')
+    ? (string)get_supabase_env('SUPABASE_SECRET_KEY', 'ballafresh_secure_session_hmac_secret_2026_salt')
+    : (getenv('SUPABASE_SECRET_KEY') ?: ($_ENV['SUPABASE_SECRET_KEY'] ?? ($_SERVER['SUPABASE_SECRET_KEY'] ?? 'ballafresh_secure_session_hmac_secret_2026_salt')));
+
+if (empty($sessionSecret)) {
+    $sessionSecret = 'ballafresh_secure_session_hmac_secret_2026_salt';
+}
 
 function get_session_secret(): string {
     global $sessionSecret;
     if (!empty($sessionSecret)) {
         return (string)$sessionSecret;
+    }
+    if (function_exists('get_supabase_env')) {
+        return (string)get_supabase_env('SUPABASE_SECRET_KEY', 'ballafresh_secure_session_hmac_secret_2026_salt');
     }
     return getenv('SUPABASE_SECRET_KEY')
         ?: ($_ENV['SUPABASE_SECRET_KEY']

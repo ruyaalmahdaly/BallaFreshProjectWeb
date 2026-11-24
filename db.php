@@ -98,16 +98,9 @@ if (!empty($pgPass) && extension_loaded('pdo_pgsql')) {
     }
 }
 
-// 3. Fallback ke Supabase REST API jika direct PostgreSQL belum terhubung tetapi SUPABASE_URL & keys tersedia
-if ($conn === null && !empty(SUPABASE_URL) && (!empty(SUPABASE_SECRET_KEY) || !empty(SUPABASE_PUBLISHABLE_KEY))) {
-    $conn = new SupabaseRestAdapter();
-    $connectedToSupabase = true;
-    $supabaseError = null;
-}
-
-// 4. Fallback ke MariaDB / MySQL Lokal (Saat dijalankan di komputer / XAMPP lokal)
+// 3. Fallback ke MariaDB / MySQL Lokal (Saat dijalankan di komputer / XAMPP lokal)
 if ($conn === null && !$isVercel) {
-    mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
+    mysqli_report(MYSQLI_REPORT_OFF);
 
     $host = get_supabase_env('DB_HOST', '127.0.0.1');
     $username = get_supabase_env('DB_USER', 'root');
@@ -116,7 +109,7 @@ if ($conn === null && !$isVercel) {
     $port = (int) get_supabase_env('DB_PORT', 3309);
 
     try {
-        $conn = new mysqli(
+        $conn = @new mysqli(
             $host,
             $username,
             $password,
@@ -124,11 +117,21 @@ if ($conn === null && !$isVercel) {
             $port
         );
 
-        $conn->set_charset('utf8mb4');
-    } catch (mysqli_sql_exception $e) {
-        error_log('Koneksi database lokal Balla Fresh gagal: ' . $e->getMessage());
+        if ($conn->connect_error) {
+            $conn = null;
+        } else {
+            $conn->set_charset('utf8mb4');
+        }
+    } catch (Throwable $e) {
         $conn = null;
     }
+}
+
+// 4. Fallback ke Supabase REST API jika direct PostgreSQL belum terhubung tetapi SUPABASE_URL & keys tersedia
+if ($conn === null && !empty(SUPABASE_URL) && (!empty(SUPABASE_SECRET_KEY) || !empty(SUPABASE_PUBLISHABLE_KEY))) {
+    $conn = new SupabaseRestAdapter();
+    $connectedToSupabase = true;
+    $supabaseError = null;
 }
 
 // 5. Jika di Vercel dan seluruh koneksi belum terhubung, siapkan safe adapter agar API tidak 500
