@@ -2427,10 +2427,99 @@ if ($page === 'dashboard') {
         .brand-name { font: 800 16px/1.1 "Manrope", sans-serif; letter-spacing: -.5px; color: #ffff; }
         .brand-name span { color: #ffff; }
         .brand-caption { color: #b3cba8; font-size: 9px; margin-top: 3px; letter-spacing: 1.2px; text-transform: uppercase; }
-        .nav-label { color: #94aa87; font-size: 9px; letter-spacing: 1.3px; text-transform: uppercase; padding: 0 8px; margin: 8px 0 5px; font-weight: 700; flex-shrink: 0; }
-        .side-nav { display: grid; gap: 3px; flex-shrink: 0; }
+
+        /* Search Bar Sebelum Navbar Dashboard */
+        .sidebar-search-wrap {
+            padding: 8px 4px 10px;
+            margin-bottom: 6px;
+            border-bottom: 1px solid rgba(255,255,255,0.08);
+            flex-shrink: 0;
+        }
+        .sidebar-search-inner {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.14);
+            border-radius: 9px;
+            padding: 6px 10px;
+            transition: all 0.2s ease;
+        }
+        .sidebar-search-inner:focus-within {
+            background: rgba(255, 255, 255, 0.14);
+            border-color: #b7d88b;
+            box-shadow: 0 0 0 2px rgba(183, 216, 139, 0.25);
+        }
+        .sidebar-search-inner i {
+            color: #a8c18f;
+            font-size: 11px;
+            flex-shrink: 0;
+        }
+        .sidebar-search-inner input {
+            background: transparent;
+            border: none;
+            outline: none;
+            color: #ffffff;
+            font-size: 11.5px;
+            width: 100%;
+            font-family: inherit;
+        }
+        .sidebar-search-inner input::placeholder {
+            color: #94aa87;
+            font-size: 11px;
+        }
+        .sidebar-search-clear {
+            background: none;
+            border: none;
+            color: #a8c18f;
+            cursor: pointer;
+            font-size: 15px;
+            line-height: 1;
+            padding: 0 2px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            transition: color 0.15s;
+        }
+        .sidebar-search-clear:hover {
+            color: #ffffff;
+        }
+
+        .side-nav-group {
+            display: grid;
+            gap: 2.5px;
+            margin-bottom: 10px;
+        }
+        .side-nav-group:last-child {
+            margin-bottom: 0;
+        }
+        .side-nav-empty {
+            padding: 20px 10px;
+            text-align: center;
+            font-size: 11px;
+            color: #94aa87;
+            background: rgba(255,255,255,0.03);
+            border-radius: 9px;
+            margin: 6px 0;
+            display: none;
+        }
+
+        .nav-label {
+            color: #94aa87;
+            font-size: 8.5px;
+            letter-spacing: 1.3px;
+            text-transform: uppercase;
+            padding: 0 8px;
+            margin: 4px 0 4px;
+            font-weight: 800;
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .side-nav { display: block; flex-shrink: 0; }
         .side-link {
-            display: flex; align-items: center; gap: 9px; padding: 8px 10px;
+            display: flex; align-items: center; gap: 9px; padding: 7.5px 10px;
             border-radius: 9px; color: #d2dfca; font-weight: 600; font-size: 12px; transition: .18s;
         }
         .side-link i { width: 16px; text-align: center; font-size: 13px; color: #a8c18f; flex-shrink: 0; }
@@ -3332,6 +3421,504 @@ if ($page === 'dashboard') {
             align-items: center;
             gap: 4px;
         }
+
+        /* ========================================================== */
+        /* AGENCY ADMIN CHAT ROOM - UI/UX STYLING                     */
+        /* ========================================================== */
+        .btn-topbar-chat {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: #ffffff;
+            border: 1px solid var(--line);
+            padding: 7px 14px;
+            border-radius: 99px;
+            color: #334155;
+            font-size: 12px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            font-family: inherit;
+        }
+        .btn-topbar-chat:hover {
+            border-color: #5b8121;
+            background: #f7faf2;
+            color: #2c3e14;
+            box-shadow: 0 2px 8px rgba(91, 129, 33, 0.12);
+        }
+        .btn-topbar-chat i {
+            color: #5b8121;
+            font-size: 13px;
+        }
+        .chat-online-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            background: rgba(16, 185, 129, 0.12);
+            color: #065f46;
+            font-size: 10.5px;
+            font-weight: 800;
+            padding: 2px 8px;
+            border-radius: 99px;
+        }
+        .chat-pulse-dot {
+            display: inline-block;
+            width: 7px;
+            height: 7px;
+            background: #10b981;
+            border-radius: 50%;
+            box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+            animation: pulseOnline 2s infinite;
+        }
+        .chat-dot-gray {
+            display: inline-block;
+            width: 7px;
+            height: 7px;
+            background: #94a3b8;
+            border-radius: 50%;
+        }
+        .chat-dot-orange {
+            display: inline-block;
+            width: 7px;
+            height: 7px;
+            background: #e48e1e;
+            border-radius: 50%;
+        }
+        @keyframes pulseOnline {
+            0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
+            70% { transform: scale(1); box-shadow: 0 0 0 5px rgba(16, 185, 129, 0); }
+            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+        }
+
+        /* Floating Dock Button (Bottom Right) */
+        .agency-chat-dock {
+            position: fixed;
+            bottom: 24px;
+            right: 28px;
+            z-index: 9990;
+        }
+        .agency-chat-dock-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            background: linear-gradient(135deg, #5b8121 0%, #3b5816 100%);
+            color: #ffffff;
+            border: none;
+            padding: 12px 18px;
+            border-radius: 99px;
+            cursor: pointer;
+            box-shadow: 0 10px 25px -4px rgba(91, 129, 33, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.2) inset;
+            font-family: inherit;
+            font-size: 13px;
+            font-weight: 700;
+            transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        .agency-chat-dock-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 14px 28px -4px rgba(91, 129, 33, 0.55);
+            background: linear-gradient(135deg, #658f26 0%, #43641a 100%);
+        }
+        .dock-icon-wrap {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 22px;
+            height: 22px;
+            font-size: 15px;
+        }
+        .dock-pulse-dot {
+            position: absolute;
+            top: -2px;
+            right: -4px;
+            width: 8px;
+            height: 8px;
+            background: #34d399;
+            border: 2px solid #3b5816;
+            border-radius: 50%;
+        }
+        .dock-badge-online {
+            background: rgba(255, 255, 255, 0.2);
+            color: #ffffff;
+            font-size: 10.5px;
+            font-weight: 800;
+            padding: 2px 8px;
+            border-radius: 99px;
+        }
+        .dock-unread-counter {
+            background: #ef4444;
+            color: #ffffff;
+            font-size: 10.5px;
+            font-weight: 800;
+            padding: 2px 7px;
+            border-radius: 99px;
+            animation: pulseUnread 1.5s infinite;
+        }
+        @keyframes pulseUnread {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.15); }
+            100% { transform: scale(1); }
+        }
+
+        /* Agency Chat Floating Window / Modal Panel */
+        .agency-chat-panel {
+            position: fixed;
+            bottom: 82px;
+            right: 28px;
+            width: 460px;
+            height: 620px;
+            max-width: calc(100vw - 32px);
+            max-height: calc(100vh - 100px);
+            background: #ffffff;
+            border: 1px solid var(--line);
+            border-radius: 18px;
+            box-shadow: 0 24px 50px -12px rgba(15, 23, 42, 0.3), 0 0 0 1px rgba(91, 129, 33, 0.12);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            z-index: 9999;
+            transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+            animation: agencyChatSlideUp 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        @keyframes agencyChatSlideUp {
+            from { opacity: 0; transform: translateY(18px) scale(0.97); }
+            to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        .agency-chat-panel.expanded {
+            width: 860px;
+            height: 720px;
+            max-height: calc(100vh - 40px);
+            bottom: 20px;
+            right: calc((100vw - 860px) / 2);
+        }
+        @media (max-width: 900px) {
+            .agency-chat-panel.expanded {
+                width: calc(100vw - 24px);
+                right: 12px;
+            }
+        }
+        @media (max-width: 600px) {
+            .agency-chat-panel {
+                width: 100vw;
+                max-width: 100vw;
+                height: 100vh;
+                max-height: 100vh;
+                bottom: 0;
+                right: 0;
+                left: 0;
+                top: 0;
+                border-radius: 0;
+                border: none;
+            }
+            .agency-chat-dock {
+                bottom: 16px;
+                right: 16px;
+            }
+        }
+
+        /* Chat Panel Header */
+        .agency-chat-head {
+            background: #f8faf5;
+            border-bottom: 1px solid var(--line);
+            display: flex;
+            flex-direction: column;
+            flex-shrink: 0;
+        }
+        .agency-chat-title-row {
+            padding: 12px 16px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+        .agency-chat-brand {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            min-width: 0;
+        }
+        .agency-brand-icon {
+            width: 34px;
+            height: 34px;
+            border-radius: 10px;
+            background: #5b8121;
+            color: #ffffff;
+            display: inline-grid;
+            place-items: center;
+            font-size: 14px;
+            flex-shrink: 0;
+        }
+        .agency-brand-name {
+            font-size: 11px;
+            font-weight: 800;
+            color: #5b8121;
+            letter-spacing: 0.5px;
+            line-height: 1.2;
+        }
+        .agency-brand-sub {
+            font-size: 12.5px;
+            font-weight: 700;
+            color: #1e293b;
+            line-height: 1.3;
+        }
+        .agency-chat-actions {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-shrink: 0;
+        }
+        .btn-chat-action {
+            width: 30px;
+            height: 30px;
+            border-radius: 8px;
+            border: 1px solid transparent;
+            background: transparent;
+            color: #64748b;
+            cursor: pointer;
+            display: inline-grid;
+            place-items: center;
+            font-size: 13px;
+            transition: all 0.15s ease;
+        }
+        .btn-chat-action:hover {
+            background: #e2e8f0;
+            color: #1e293b;
+        }
+        .btn-chat-action.active {
+            color: #5b8121;
+            background: #eaf2e2;
+        }
+        .btn-close-chat:hover {
+            background: #fee2e2;
+            color: #dc2626;
+        }
+
+        /* Channel & Admin Navigation Pills */
+        .agency-chat-nav-scroll {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 14px;
+            background: #ffffff;
+            border-top: 1px solid rgba(0,0,0,0.04);
+            border-bottom: 1px solid var(--line);
+            overflow-x: auto;
+            scrollbar-width: none;
+            -ms-overflow-style: none;
+        }
+        .agency-chat-nav-scroll::-webkit-scrollbar {
+            display: none;
+        }
+        .agency-admin-pills-wrap {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-shrink: 0;
+        }
+        .chat-tab-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 5px 11px;
+            border-radius: 99px;
+            border: 1px solid #cbd5e1;
+            background: #ffffff;
+            color: #334155;
+            font-size: 11.5px;
+            font-weight: 700;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: all 0.2s ease;
+            font-family: inherit;
+            flex-shrink: 0;
+        }
+        .chat-tab-pill:hover {
+            border-color: #5b8121;
+            background: #fcfdf9;
+            color: #2c3e14;
+        }
+        .chat-tab-pill.active {
+            background: #5b8121;
+            color: #ffffff;
+            border-color: #5b8121;
+            box-shadow: 0 2px 6px rgba(91, 129, 33, 0.2);
+        }
+        .pill-status-dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+        .pill-status-dot.online {
+            background: #10b981;
+            box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.3);
+        }
+        .pill-status-dot.offline {
+            background: #94a3b8;
+        }
+        .pill-status-dot.recent {
+            background: #e48e1e;
+        }
+
+        /* Active Room Header Sub-Bar */
+        .agency-room-head-bar {
+            padding: 10px 16px;
+            background: #ffffff;
+            border-bottom: 1px solid var(--line);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            flex-shrink: 0;
+        }
+        .online-tag-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 11px;
+            font-weight: 700;
+            color: #065f46;
+            background: #d1fae5;
+            padding: 2px 8px;
+            border-radius: 99px;
+        }
+        .online-tag-badge.offline {
+            background: #f1f5f9;
+            color: #64748b;
+        }
+
+        /* Message Scroll List */
+        .agency-chat-scroll {
+            flex: 1;
+            padding: 14px 16px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            background: #fafbf8;
+            min-height: 0;
+        }
+        .agency-chat-welcome-banner {
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-left: 3.5px solid #5b8121;
+            border-radius: 12px;
+            padding: 12px 14px;
+            margin-bottom: 4px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.02);
+        }
+        .agency-messages-list {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        /* Bubble Messages */
+        .agency-msg-item {
+            display: flex;
+            flex-direction: column;
+            max-width: 84%;
+            animation: msgFadeIn 0.2s ease-out;
+        }
+        @keyframes msgFadeIn {
+            from { opacity: 0; transform: translateY(4px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .agency-msg-item.self {
+            align-self: flex-end;
+            align-items: flex-end;
+        }
+        .agency-msg-item.other {
+            align-self: flex-start;
+            align-items: flex-start;
+        }
+        .agency-msg-sender-meta {
+            font-size: 11px;
+            font-weight: 700;
+            color: #64748b;
+            margin-bottom: 3px;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .agency-msg-item.self .agency-msg-sender-meta {
+            color: #5b8121;
+        }
+        .agency-role-badge {
+            font-size: 9.5px;
+            font-weight: 800;
+            padding: 1px 6px;
+            border-radius: 99px;
+            background: #eaf2e2;
+            color: #3b5816;
+            text-transform: uppercase;
+        }
+
+        /* Input Footer */
+        .agency-chat-footer {
+            padding: 12px 14px;
+            background: #ffffff;
+            border-top: 1px solid var(--line);
+            flex-shrink: 0;
+        }
+        .btn-chat-attach {
+            height: 48px;
+            width: 48px;
+            padding: 0;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 10px;
+            background: #f8fafc;
+            color: #475569;
+            border: 1px solid #cbd5e1;
+            cursor: pointer;
+            flex-shrink: 0;
+            transition: all 0.2s ease;
+        }
+        .btn-chat-attach:hover {
+            border-color: #5b8121;
+            color: #5b8121;
+            background: #f7faf2;
+        }
+        .btn-agency-send {
+            height: 48px;
+            padding: 0 18px;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: #5b8121;
+            color: #ffffff;
+            border: none;
+            border-radius: 10px;
+            font-weight: 700;
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            flex-shrink: 0;
+        }
+        .btn-agency-send:hover {
+            background: #4a6c18;
+            box-shadow: 0 4px 12px rgba(91, 129, 33, 0.25);
+        }
+        .btn-agency-send:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        .agency-chat-textarea {
+            font-family: inherit;
+            font-size: 12.5px;
+            line-height: 1.4;
+            padding: 10px 12px;
+            border-radius: 10px;
+            border: 1px solid #cbd5e1;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+        .agency-chat-textarea:focus {
+            border-color: #5b8121;
+            box-shadow: 0 0 0 3px rgba(91, 129, 33, 0.12);
+        }
         .policy-edit-box {
             background: #ffffff;
             border: 1px solid var(--line);
@@ -4184,28 +4771,85 @@ if ($page === 'dashboard') {
             </span>
         </a>
 
-        <div class="nav-label">Workspace</div>
-        <nav class="side-nav" aria-label="Navigasi admin">
-            <a href="admin_dashboard.php?page=dashboard" class="side-link <?= $page === 'dashboard' ? 'active' : '' ?>"><i class="fa-solid fa-chart-pie"></i> Dashboard</a>
-            <a href="admin_dashboard.php?page=orders" class="side-link <?= $page === 'orders' ? 'active' : '' ?>"><i class="fa-solid fa-cart-shopping"></i> Pengelolaan Pesanan</a>
-            <a href="admin_dashboard.php?page=customers" class="side-link <?= $page === 'customers' ? 'active' : '' ?>"><i class="fa-solid fa-users"></i> Data Pelanggan</a>
-            <a href="admin_dashboard.php?page=businesses" class="side-link <?= $page === 'businesses' ? 'active' : '' ?>"><i class="fa-solid fa-briefcase"></i> Data Usaha Mitra</a>
-            <a href="admin_dashboard.php?page=consultations" class="side-link <?= $page === 'consultations' ? 'active' : '' ?>">
-                <i class="fa-solid fa-comments"></i> Konsultasi &amp; Chat
-                <?php if ($pendingConsultationCount > 0): ?>
-                    <span style="margin-left:auto;background:#e48e1e;color:#fff;font-size:10px;font-weight:800;padding:2px 7px;border-radius:99px"><?= $pendingConsultationCount ?> ACC</span>
-                <?php endif; ?>
-            </a>
-            <a href="admin_dashboard.php?page=activity" class="side-link <?= $page === 'activity' ? 'active' : '' ?>"><i class="fa-solid fa-clock-rotate-left"></i> Aktivitas Terbaru</a>
-            <a href="admin_dashboard.php?page=agency" class="side-link <?= $page === 'agency' ? 'active' : '' ?>"><i class="fa-solid fa-seedling"></i> Operasional Agency</a>
-            <a href="admin_dashboard.php?page=articles" class="side-link <?= $page === 'articles' ? 'active' : '' ?>"><i class="fa-solid fa-newspaper"></i> Kelola Artikel</a>
-            <a href="admin_dashboard.php?page=admins" class="side-link <?= $page === 'admins' ? 'active' : '' ?>">
-                <i class="fa-solid fa-user-shield"></i> Kelola Admin
-                <?php if ($onlineAdminCount > 0): ?>
-                    <span style="margin-left:auto;background:rgba(16,185,129,0.22);color:#d1fae5;font-size:10px;font-weight:800;padding:2px 7px;border-radius:99px"><i class="fa-solid fa-circle" style="font-size:7px;color:#10b981;margin-right:2px"></i> <?= $onlineAdminCount ?> On</span>
-                <?php endif; ?>
-            </a>
-            <a href="admin_dashboard.php?page=settings" class="side-link <?= $page === 'settings' ? 'active' : '' ?>"><i class="fa-solid fa-shield-halved"></i> Pengaturan &amp; Kebijakan</a>
+        <!-- SEARCH BAR SEBELUM NAVBAR DASHBOARD -->
+        <div class="sidebar-search-wrap">
+            <div class="sidebar-search-inner">
+                <i class="fa-solid fa-magnifying-glass"></i>
+                <input type="text" id="sidebarNavSearch" placeholder="Cari menu &amp; fitur..." autocomplete="off" aria-label="Cari menu navigasi">
+                <button type="button" id="sidebarSearchClear" class="sidebar-search-clear" style="display:none" title="Reset pencarian">&times;</button>
+            </div>
+        </div>
+
+        <nav class="side-nav" id="sidebarNav" aria-label="Navigasi admin">
+            <div id="sideNavEmpty" class="side-nav-empty">
+                <i class="fa-solid fa-circle-exclamation" style="display:block;font-size:16px;margin-bottom:4px"></i>
+                Menu tidak ditemukan
+            </div>
+
+            <!-- KATEGORI 1: IKHTISAR & ANALITIK -->
+            <div class="side-nav-group" data-nav-group="overview">
+                <div class="nav-label">Ikhtisar &amp; Analitik</div>
+                <a href="admin_dashboard.php?page=dashboard" class="side-link <?= $page === 'dashboard' ? 'active' : '' ?>" data-search-terms="dashboard performa bisnis intelligence analytics statistik grafik pendapatan omset">
+                    <i class="fa-solid fa-chart-pie"></i> Dashboard
+                </a>
+                <a href="admin_dashboard.php?page=activity" class="side-link <?= $page === 'activity' ? 'active' : '' ?>" data-search-terms="aktivitas terbaru log riwayat sistem user baru pendaftaran">
+                    <i class="fa-solid fa-clock-rotate-left"></i> Aktivitas Terbaru
+                </a>
+            </div>
+
+            <!-- KATEGORI 2: KLIEN & TRANSAKSI -->
+            <div class="side-nav-group" data-nav-group="commerce">
+                <div class="nav-label">Pesanan &amp; Klien</div>
+                <a href="admin_dashboard.php?page=orders" class="side-link <?= $page === 'orders' ? 'active' : '' ?>" data-search-terms="pengelolaan pesanan orders transaksi invoice pembayaran struk">
+                    <i class="fa-solid fa-cart-shopping"></i> Pengelolaan Pesanan
+                </a>
+                <a href="admin_dashboard.php?page=customers" class="side-link <?= $page === 'customers' ? 'active' : '' ?>" data-search-terms="data pelanggan users customer pembeli akun email profil">
+                    <i class="fa-solid fa-users"></i> Data Pelanggan
+                </a>
+                <a href="admin_dashboard.php?page=businesses" class="side-link <?= $page === 'businesses' ? 'active' : '' ?>" data-search-terms="data usaha mitra bisnis umkm hidroponik kebun kontak alamat">
+                    <i class="fa-solid fa-briefcase"></i> Data Usaha Mitra
+                </a>
+            </div>
+
+            <!-- KATEGORI 3: KONSULTASI & KOMUNIKASI -->
+            <div class="side-nav-group" data-nav-group="communication">
+                <div class="nav-label">Konsultasi &amp; Chat</div>
+                <a href="admin_dashboard.php?page=consultations" class="side-link <?= $page === 'consultations' ? 'active' : '' ?>" data-search-terms="konsultasi room chat tiket mitra bantuan pesan acc permohonan">
+                    <i class="fa-solid fa-comments"></i> Konsultasi &amp; Chat
+                    <?php if ($pendingConsultationCount > 0): ?>
+                        <span style="margin-left:auto;background:#e48e1e;color:#fff;font-size:10px;font-weight:800;padding:2px 7px;border-radius:99px"><?= $pendingConsultationCount ?> ACC</span>
+                    <?php endif; ?>
+                </a>
+                <button type="button" class="side-link btn-side-chat-trigger" id="btnSideAgencyChat" style="width:100%;text-align:left;background:transparent;border:none;cursor:pointer;font-family:inherit" title="Buka Room Chat Internal Admin Agency" data-search-terms="chat admin agency internal tim diskusi koordinasi room live">
+                    <i class="fa-solid fa-message"></i> Chat Tim Agency
+                    <span style="margin-left:auto;background:rgba(16,185,129,0.22);color:#d1fae5;font-size:10px;font-weight:800;padding:2px 7px;border-radius:99px"><i class="fa-solid fa-circle" style="font-size:7px;color:#10b981;margin-right:2px"></i> Live</span>
+                </button>
+            </div>
+
+            <!-- KATEGORI 4: OPERASIONAL & KONTEN -->
+            <div class="side-nav-group" data-nav-group="operations">
+                <div class="nav-label">Operasional &amp; Konten</div>
+                <a href="admin_dashboard.php?page=agency" class="side-link <?= $page === 'agency' ? 'active' : '' ?>" data-search-terms="operasional agency cms website hero katalog layanan tim portofolio kontak profil">
+                    <i class="fa-solid fa-seedling"></i> Operasional Agency
+                </a>
+                <a href="admin_dashboard.php?page=articles" class="side-link <?= $page === 'articles' ? 'active' : '' ?>" data-search-terms="kelola artikel berita edukasi blog hidroponik tips posting publikasi">
+                    <i class="fa-solid fa-newspaper"></i> Kelola Artikel
+                </a>
+            </div>
+
+            <!-- KATEGORI 5: SISTEM & KEAMANAN -->
+            <div class="side-nav-group" data-nav-group="system">
+                <div class="nav-label">Sistem &amp; Keamanan</div>
+                <a href="admin_dashboard.php?page=admins" class="side-link <?= $page === 'admins' ? 'active' : '' ?>" data-search-terms="kelola admin akses administrator hak owner akun status online password">
+                    <i class="fa-solid fa-user-shield"></i> Kelola Admin
+                    <?php if ($onlineAdminCount > 0): ?>
+                        <span style="margin-left:auto;background:rgba(16,185,129,0.22);color:#d1fae5;font-size:10px;font-weight:800;padding:2px 7px;border-radius:99px"><i class="fa-solid fa-circle" style="font-size:7px;color:#10b981;margin-right:2px"></i> <?= $onlineAdminCount ?> On</span>
+                    <?php endif; ?>
+                </a>
+                <a href="admin_dashboard.php?page=settings" class="side-link <?= $page === 'settings' ? 'active' : '' ?>" data-search-terms="pengaturan kebijakan privasi terms syarat ketentuan sistem konfigurasi security">
+                    <i class="fa-solid fa-shield-halved"></i> Pengaturan &amp; Kebijakan
+                </a>
+            </div>
         </nav>
 
         <div class="side-spacer"></div>
@@ -4239,6 +4883,15 @@ if ($page === 'dashboard') {
             <button class="mobile-menu" id="mobileMenu" aria-label="Buka menu"><i class="fa-solid fa-bars"></i></button>
             <div class="crumb">Workspace <span aria-hidden="true">/</span> <strong><?= e($pageTitle) ?></strong></div>
             <div class="top-actions">
+                <!-- Tombol Dropdown / Trigger Chat Internal Admin Agency -->
+                <button type="button" class="btn-topbar-chat" id="btnTopbarAgencyChat" title="Buka Room Chat Internal Admin Agency">
+                    <i class="fa-solid fa-comments"></i>
+                    <span class="btn-chat-text">Chat Agency</span>
+                    <span class="chat-online-pill" id="topbarOnlinePill" title="Jumlah admin agency online sekarang">
+                        <span class="chat-pulse-dot"></span>
+                        <span id="topbarOnlineCount"><?= (int)$onlineAdminCount ?></span> On
+                    </span>
+                </button>
                 <div class="date-chip"><i class="fa-regular fa-calendar"></i> <span id="todayLabel"></span></div>
                 <div class="top-avatar">
                     <span class="avatar"><?= e($initials) ?></span>
@@ -7601,6 +8254,124 @@ if ($page === 'dashboard') {
     </div>
 </div>
 
+<!-- ========================================================== -->
+<!-- FLOATING DOCK BUTTON CHAT ADMIN AGENCY                     -->
+<!-- ========================================================== -->
+<div class="agency-chat-dock" id="agencyChatDock">
+    <button type="button" class="agency-chat-dock-btn" id="btnDockToggleChat" title="Buka Room Chat Internal Admin Agency">
+        <span class="dock-icon-wrap">
+            <i class="fa-solid fa-comments"></i>
+            <span class="dock-pulse-dot"></span>
+        </span>
+        <span class="dock-label">Chat Tim Agency</span>
+        <span class="dock-badge-online" id="dockOnlinePill"><span id="dockOnlineCount"><?= (int)$onlineAdminCount ?></span> On</span>
+        <span class="dock-unread-counter" id="dockUnreadCount" style="display:none">0</span>
+    </button>
+</div>
+
+<!-- ========================================================== -->
+<!-- AGENCY ADMIN CHAT ROOM PANEL (POPUP / DRAWER / DOCK)       -->
+<!-- ========================================================== -->
+<div class="agency-chat-panel" id="agencyChatPanel" style="display:none" role="dialog" aria-modal="false" aria-label="Room Chat Internal Admin Agency">
+    <!-- Panel Header -->
+    <div class="agency-chat-head">
+        <div class="agency-chat-title-row">
+            <div class="agency-chat-brand">
+                <span class="agency-brand-icon"><i class="fa-solid fa-comments"></i></span>
+                <div>
+                    <div class="agency-brand-name">BALLA’ FRESH · AGENCY DESK</div>
+                    <div class="agency-brand-sub" id="agencyChatStatusSub">Room Chat Internal Agency</div>
+                </div>
+            </div>
+            <div class="agency-chat-actions">
+                <button type="button" class="btn-chat-action active" id="btnToggleAudio" title="Suara Notifikasi: Aktif"><i class="fa-solid fa-volume-high"></i></button>
+                <button type="button" class="btn-chat-action" id="btnRefreshChat" title="Segarkan Pesan"><i class="fa-solid fa-arrows-rotate"></i></button>
+                <button type="button" class="btn-chat-action" id="btnExpandChat" title="Perbesar Ukuran Jendela"><i class="fa-solid fa-expand"></i></button>
+                <button type="button" class="btn-chat-action btn-close-chat" id="btnCloseAgencyChat" title="Tutup Chat"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+        </div>
+
+        <!-- Navigation Tabs: Channel Tim & Direct Admin -->
+        <div class="agency-chat-nav-scroll" id="agencyChatNavScroll">
+            <button type="button" class="chat-tab-pill active" data-room-id="general" id="tabRoomGeneral" title="Ruang Diskusi Semua Tim Admin">
+                <i class="fa-solid fa-users"></i>
+                <span># Ruang Tim</span>
+                <span class="pill-status-dot online"></span>
+            </button>
+            <div id="agencyAdminPillsWrap" class="agency-admin-pills-wrap">
+                <!-- Direct admin tabs injected via JavaScript -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Active Room Bar (Header Room Chat) -->
+    <div class="agency-room-head-bar">
+        <div style="display:flex;align-items:center;gap:10px;min-width:0">
+            <span class="customer-avatar agency-avatar" id="activeRoomAvatar" style="width:36px;height:36px;border-radius:50%;background:#eaf2e2;color:#3b5816;display:inline-grid;place-items:center;font-weight:800;font-size:13px;flex-shrink:0">
+                BF
+            </span>
+            <div style="min-width:0">
+                <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+                    <strong id="activeRoomTitle" style="font-size:13.5px;color:#1e293b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Ruang Tim Agency</strong>
+                    <span id="activeRoomBadge" class="badge-acc-approved" style="font-size:10px;padding:2px 7px"><i class="fa-solid fa-users" style="font-size:8px;margin-right:2px"></i> Semua Admin</span>
+                </div>
+                <div id="activeRoomSubtitle" style="font-size:11px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+                    Saluran koordinasi operasional &amp; diskusi realtime
+                </div>
+            </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+            <span class="online-tag-badge" id="activeRoomOnlineTag"><span class="chat-pulse-dot"></span> Aktif</span>
+        </div>
+    </div>
+
+    <!-- Scrollable Message Body -->
+    <div class="agency-chat-scroll" id="agencyChatMessagesScroll">
+        <div class="agency-chat-welcome-banner">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+                <span style="width:24px;height:24px;border-radius:6px;background:rgba(91,129,33,0.12);color:#5b8121;display:inline-grid;place-items:center;font-size:12px"><i class="fa-solid fa-shield-halved"></i></span>
+                <strong style="font-size:12px;color:#2c3e14">Ruang Komunikasi Internal Admin Agency</strong>
+            </div>
+            <p style="margin:0;font-size:11px;color:#475569;line-height:1.45">
+                Gunakan ruang ini untuk koordinasi pesanan, tiket konsultasi mitra, desain kemasan, dan update tugas harian para admin secara cepat dalam satu platform.
+            </p>
+        </div>
+
+        <div id="agencyMessagesList" class="agency-messages-list">
+            <div style="text-align:center;padding:24px;color:#94a3b8;font-size:11.5px">
+                <i class="fa-solid fa-circle-notch fa-spin" style="font-size:20px;color:#5b8121;margin-bottom:6px"></i><br>
+                Memuat obrolan tim...
+            </div>
+        </div>
+    </div>
+
+    <!-- Input Footer -->
+    <div class="agency-chat-footer">
+        <!-- Preview file terpilih -->
+        <div id="agencyFilePreviewWrap" class="admin-file-preview-wrap" style="display:none"></div>
+
+        <form id="agencyChatForm" enctype="multipart/form-data" style="display:grid;gap:6px">
+            <div style="display:flex;gap:8px;align-items:flex-end">
+                <label for="agencyChatFilesInput" class="btn-chat-attach" title="Lampirkan File (Gambar, Video, Dokumen PDF/Word/Excel - Maks. 5 file, 20MB/file)">
+                    <i class="fa-solid fa-paperclip" style="font-size:16px"></i>
+                </label>
+                <input type="file" name="chat_files[]" id="agencyChatFilesInput" multiple accept=".jpg,.jpeg,.png,.webp,.gif,.mp4,.webm,.mov,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv" style="display:none">
+
+                <textarea class="agency-chat-textarea" name="message" id="agencyChatMessageInput" rows="2" placeholder="Ketik pesan untuk tim admin agency..." style="resize:none;flex:1"></textarea>
+
+                <button type="submit" class="btn-agency-send" id="btnSendAgencyChat" title="Kirim Pesan">
+                    <i class="fa-solid fa-paper-plane"></i>
+                    <span>Kirim</span>
+                </button>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center;font-size:10px;color:#94a3b8;padding:0 2px">
+                <span><i class="fa-regular fa-keyboard"></i> <strong>Enter</strong> kirim, <strong>Shift+Enter</strong> baris baru · Paste (Ctrl+V) file/gambar</span>
+                <span id="agencyFileCountHint">0 file</span>
+            </div>
+        </form>
+    </div>
+</div>
+
 <script>
 const orderStatusFilter = document.getElementById('orderStatusFilter');
 if (orderStatusFilter) {
@@ -8111,6 +8882,806 @@ if (authorAvatarInput && authorAvatarPreview) {
         }
     });
 }
+
+// =========================================================================
+// REAL-TIME AGENCY ADMIN CHAT ROOM ENGINE
+// =========================================================================
+(function() {
+    const chatPanel = document.getElementById('agencyChatPanel');
+    const chatDock = document.getElementById('agencyChatDock');
+    const btnDockToggle = document.getElementById('btnDockToggleChat');
+    const btnTopbarOpen = document.getElementById('btnTopbarAgencyChat');
+    const btnSideOpen = document.getElementById('btnSideAgencyChat');
+    const btnClose = document.getElementById('btnCloseAgencyChat');
+    const btnExpand = document.getElementById('btnExpandChat');
+    const btnRefresh = document.getElementById('btnRefreshChat');
+    const btnAudio = document.getElementById('btnToggleAudio');
+
+    const navScroll = document.getElementById('agencyChatNavScroll');
+    const tabGeneral = document.getElementById('tabRoomGeneral');
+    const adminPillsWrap = document.getElementById('agencyAdminPillsWrap');
+
+    const activeAvatar = document.getElementById('activeRoomAvatar');
+    const activeTitle = document.getElementById('activeRoomTitle');
+    const activeBadge = document.getElementById('activeRoomBadge');
+    const activeSubtitle = document.getElementById('activeRoomSubtitle');
+    const activeOnlineTag = document.getElementById('activeRoomOnlineTag');
+
+    const messagesScroll = document.getElementById('agencyChatMessagesScroll');
+    const messagesList = document.getElementById('agencyMessagesList');
+
+    const chatForm = document.getElementById('agencyChatForm');
+    const chatInput = document.getElementById('agencyChatMessageInput');
+    const chatFilesInput = document.getElementById('agencyChatFilesInput');
+    const filePreviewWrap = document.getElementById('agencyFilePreviewWrap');
+    const fileCountHint = document.getElementById('agencyFileCountHint');
+    const btnSend = document.getElementById('btnSendAgencyChat');
+
+    const dockOnlineCount = document.getElementById('dockOnlineCount');
+    const topbarOnlineCount = document.getElementById('topbarOnlineCount');
+    const dockUnreadCount = document.getElementById('dockUnreadCount');
+
+    if (!chatPanel) return;
+
+    // State
+    let isChatOpen = false;
+    let isExpanded = false;
+    let soundEnabled = true;
+    let currentRoomId = 'general';
+    let currentPartner = null;
+    let lastMsgId = 0;
+    let unreadCount = 0;
+    let pollInterval = null;
+    let isSending = false;
+    let isPolling = false;
+    let currentAdminId = <?= (int)$adminId ?>;
+    let currentAdminName = '<?= addslashes($adminName) ?>';
+    let cachedAdmins = [];
+    let agencyDT = new DataTransfer();
+
+    // Sound Notification: Web Audio API
+    function playNotificationChime() {
+        if (!soundEnabled) return;
+        try {
+            const AudioContext = window.AudioContext || window.webkitAudioContext;
+            if (!AudioContext) return;
+            const ctx = new AudioContext();
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(587.33, ctx.currentTime); // D5
+            osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.12); // A5
+
+            gain.gain.setValueAtTime(0.09, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
+
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+
+            osc.start();
+            osc.stop(ctx.currentTime + 0.35);
+        } catch (e) {}
+    }
+
+    // Toggle Chat Panel (Buka / Tutup)
+    function toggleChat(forceOpen = null) {
+        if (forceOpen === null) {
+            isChatOpen = !isChatOpen;
+        } else {
+            isChatOpen = !!forceOpen;
+        }
+
+        if (isChatOpen) {
+            chatPanel.style.display = 'flex';
+            unreadCount = 0;
+            updateUnreadBadge();
+
+            // Load percakapan awal
+            loadRoomMessages(currentRoomId);
+
+            setTimeout(() => {
+                if (chatInput) chatInput.focus();
+                scrollChatToBottom(false);
+            }, 100);
+
+            // Percepat polling saat panel terbuka
+            restartPolling(3000);
+        } else {
+            chatPanel.style.display = 'none';
+            // Polling santai saat panel tertutup (update badge unread & online status)
+            restartPolling(8000);
+        }
+    }
+
+    // Update Badge Unread
+    function updateUnreadBadge() {
+        if (dockUnreadCount) {
+            if (unreadCount > 0 && !isChatOpen) {
+                dockUnreadCount.textContent = unreadCount > 99 ? '99+' : unreadCount;
+                dockUnreadCount.style.display = 'inline-block';
+            } else {
+                dockUnreadCount.style.display = 'none';
+            }
+        }
+    }
+
+    // Restart Polling Timer
+    function restartPolling(ms = 3500) {
+        if (pollInterval) clearInterval(pollInterval);
+        pollInterval = setInterval(pollMessages, ms);
+    }
+
+    // Ganti Room / Channel Percakapan
+    function switchRoom(roomId, partnerData = null) {
+        if (currentRoomId === roomId && messagesList.children.length > 1) {
+            return;
+        }
+
+        currentRoomId = roomId;
+        currentPartner = partnerData;
+        lastMsgId = 0;
+
+        // Perbarui highlight tab pill
+        document.querySelectorAll('.chat-tab-pill').forEach(pill => {
+            pill.classList.toggle('active', pill.dataset.roomId === roomId);
+        });
+
+        // Perbarui header room chat
+        if (roomId === 'general') {
+            activeAvatar.textContent = 'BF';
+            activeAvatar.style.background = '#eaf2e2';
+            activeAvatar.style.color = '#3b5816';
+            activeTitle.textContent = 'Ruang Tim Agency';
+            activeBadge.innerHTML = '<i class="fa-solid fa-users" style="font-size:8px;margin-right:2px"></i> Semua Admin';
+            activeBadge.className = 'badge-acc-approved';
+            activeSubtitle.textContent = 'Saluran koordinasi operasional & diskusi realtime';
+            activeOnlineTag.innerHTML = '<span class="chat-pulse-dot"></span> Live Team';
+            activeOnlineTag.className = 'online-tag-badge';
+        } else if (partnerData) {
+            activeAvatar.textContent = partnerData.initials || 'AD';
+            activeAvatar.style.background = '#dbeafe';
+            activeAvatar.style.color = '#1e40af';
+            activeTitle.textContent = partnerData.name;
+            const isOwner = ((partnerData.is_owner == 1) || partnerData.role === 'owner');
+            activeBadge.innerHTML = isOwner ? '<i class="fa-solid fa-crown" style="font-size:8px;margin-right:2px"></i> Owner' : '<i class="fa-solid fa-user-shield" style="font-size:8px;margin-right:2px"></i> Admin';
+            activeBadge.className = isOwner ? 'badge-acc-pending' : 'badge-acc-completed';
+
+            const st = partnerData.online_status || {};
+            if (st.is_online) {
+                activeSubtitle.textContent = 'Online sekarang di dashboard';
+                activeOnlineTag.innerHTML = '<span class="chat-pulse-dot"></span> Online';
+                activeOnlineTag.className = 'online-tag-badge';
+            } else {
+                activeSubtitle.textContent = st.time_text || st.label || 'Offline';
+                activeOnlineTag.innerHTML = '<span class="chat-dot-gray"></span> ' + (st.label || 'Offline');
+                activeOnlineTag.className = 'online-tag-badge offline';
+            }
+        }
+
+        // Tampilkan loading placeholder
+        messagesList.innerHTML = `
+            <div style="text-align:center;padding:30px;color:#94a3b8;font-size:12px">
+                <i class="fa-solid fa-circle-notch fa-spin" style="font-size:22px;color:#5b8121;margin-bottom:8px"></i><br>
+                Memuat obrolan...
+            </div>
+        `;
+
+        loadRoomMessages(roomId);
+    }
+
+    // Render Admin Pills di Bar Navigasi
+    function renderAdminPills(admins) {
+        if (!adminPillsWrap) return;
+        cachedAdmins = admins;
+        adminPillsWrap.innerHTML = '';
+
+        admins.forEach(adm => {
+            // Sembunyikan admin yang sedang login dari DM list dirinya sendiri
+            if (adm.is_current || parseInt(adm.id, 10) === currentAdminId) {
+                return;
+            }
+
+            const targetId = parseInt(adm.id, 10);
+            const minId = Math.min(currentAdminId, targetId);
+            const maxId = Math.max(currentAdminId, targetId);
+            const dmRoomId = `dm_${minId}_${maxId}`;
+
+            const pill = document.createElement('button');
+            pill.type = 'button';
+            pill.className = 'chat-tab-pill' + (currentRoomId === dmRoomId ? ' active' : '');
+            pill.dataset.roomId = dmRoomId;
+            pill.title = `${adm.name} (${adm.online_status?.label || 'Offline'})`;
+
+            const isOnline = adm.online_status?.is_online;
+            const dotClass = isOnline ? 'online' : (adm.online_status?.status_type === 'recent' ? 'recent' : 'offline');
+
+            pill.innerHTML = `
+                <span class="pill-status-dot ${dotClass}"></span>
+                <span>${escapeHtml(adm.name)}</span>
+            `;
+
+            pill.addEventListener('click', () => {
+                switchRoom(dmRoomId, adm);
+            });
+
+            adminPillsWrap.appendChild(pill);
+        });
+    }
+
+    // Muat Pesan Room (Fetch Awal)
+    function loadRoomMessages(roomId) {
+        fetch(`admin_chat_api.php?action=fetch_init&room_id=${encodeURIComponent(roomId)}`)
+            .then(res => res.json())
+            .then(data => {
+                if (!data.success) {
+                    messagesList.innerHTML = `<div style="text-align:center;padding:20px;color:#ef4444;font-size:12px">${escapeHtml(data.error || 'Gagal memuat pesan')}</div>`;
+                    return;
+                }
+
+                // Perbarui status online
+                if (data.total_online !== undefined) {
+                    if (dockOnlineCount) dockOnlineCount.textContent = data.total_online;
+                    if (topbarOnlineCount) topbarOnlineCount.textContent = data.total_online;
+                }
+
+                // Render admin tabs
+                if (data.admins && Array.isArray(data.admins)) {
+                    renderAdminPills(data.admins);
+                }
+
+                // Simpan last message id
+                const messages = data.messages || [];
+                if (messages.length > 0) {
+                    lastMsgId = messages[messages.length - 1].id;
+                }
+
+                // Render pesan ke chat
+                renderMessages(messages, false);
+                scrollChatToBottom(true);
+            })
+            .catch(err => {
+                console.error('Agency Chat Fetch Error:', err);
+                messagesList.innerHTML = `<div style="text-align:center;padding:20px;color:#ef4444;font-size:12px">Koneksi terputus. Silakan coba kembali.</div>`;
+            });
+    }
+
+    // Polling Pesan Baru Secara Realtime
+    function pollMessages() {
+        if (isPolling) return;
+        isPolling = true;
+
+        fetch(`admin_chat_api.php?action=fetch_messages&room_id=${encodeURIComponent(currentRoomId)}&after_id=${lastMsgId}`)
+            .then(res => res.json())
+            .then(data => {
+                isPolling = false;
+                if (!data.success) return;
+
+                // Perbarui jumlah admin online
+                if (data.total_online !== undefined) {
+                    if (dockOnlineCount) dockOnlineCount.textContent = data.total_online;
+                    if (topbarOnlineCount) topbarOnlineCount.textContent = data.total_online;
+                }
+
+                // Perbarui status online admin pills
+                if (data.admins && Array.isArray(data.admins)) {
+                    renderAdminPills(data.admins);
+                }
+
+                const newMsgs = data.messages || [];
+                if (newMsgs.length > 0) {
+                    lastMsgId = newMsgs[newMsgs.length - 1].id;
+
+                    // Periksa apakah ada pesan dari orang lain
+                    const hasIncomingFromOther = newMsgs.some(m => !m.is_self);
+                    if (hasIncomingFromOther) {
+                        playNotificationChime();
+                        if (!isChatOpen) {
+                            unreadCount += newMsgs.filter(m => !m.is_self).length;
+                            updateUnreadBadge();
+                        }
+                    }
+
+                    renderMessages(newMsgs, true);
+                    scrollChatToBottom(false);
+                }
+            })
+            .catch(() => {
+                isPolling = false;
+            });
+    }
+
+    // Render Pesan ke DOM
+    function renderMessages(messages, append = false) {
+        if (!append) {
+            messagesList.innerHTML = '';
+        }
+
+        if (messages.length === 0 && !append) {
+            messagesList.innerHTML = `
+                <div style="text-align:center;padding:36px 14px;color:#94a3b8">
+                    <i class="fa-regular fa-comment-dots" style="font-size:32px;color:#cbd5e1;margin-bottom:8px"></i>
+                    <p style="margin:0;font-size:12.5px;color:#64748b;font-weight:600">Belum ada obrolan di room ini.</p>
+                    <p style="margin:4px 0 0;font-size:11.5px;color:#94a3b8">Ketik pesan pertama Anda di bawah untuk memulai koordinasi dengan rekan admin agency.</p>
+                </div>
+            `;
+            return;
+        }
+
+        // Hapus empty state placeholder jika ada
+        const emptyState = messagesList.querySelector('.empty-chat-state');
+        if (emptyState) emptyState.remove();
+
+        messages.forEach(msg => {
+            const isSelf = msg.is_self;
+            const msgEl = document.createElement('div');
+            msgEl.className = 'agency-msg-item ' + (isSelf ? 'self' : 'other');
+
+            // Header Pengirim
+            let senderHtml = '';
+            if (isSelf) {
+                senderHtml = `<div class="agency-msg-sender-meta">Anda</div>`;
+            } else {
+                senderHtml = `
+                    <div class="agency-msg-sender-meta">
+                        <span>${escapeHtml(msg.sender_name)}</span>
+                        <span class="agency-role-badge">Admin</span>
+                    </div>
+                `;
+            }
+
+            // Bubble
+            let bubbleHtml = `<div class="chat-bubble ${isSelf ? 'admin-bubble' : 'mitra-bubble'}">`;
+
+            // Teks Pesan
+            if (msg.text && msg.text.trim() !== '') {
+                bubbleHtml += `<div style="word-break:break-word">${formatChatMessageText(msg.text)}</div>`;
+            }
+
+            // Lampiran Attachments
+            if (msg.attachments && msg.attachments.length > 0) {
+                bubbleHtml += `<div class="chat-attachments-list">`;
+                msg.attachments.forEach(att => {
+                    const ext = (att.ext || '').toLowerCase();
+                    const isImg = ['jpg', 'jpeg', 'png', 'webp', 'gif'].includes(ext);
+                    const isVid = ['mp4', 'webm', 'mov'].includes(ext);
+
+                    if (isImg) {
+                        bubbleHtml += `
+                            <div class="chat-att-card chat-att-image">
+                                <img src="${escapeHtml(att.url)}" alt="${escapeHtml(att.name)}" class="chat-thumb-img" onclick="openChatLightbox('${escapeHtml(att.url)}', '${escapeHtml(att.name)}')" title="Klik untuk memperbesar gambar">
+                                <div class="chat-att-meta">
+                                    <span class="chat-att-name" title="${escapeHtml(att.name)}">
+                                        <i class="fa-solid fa-image"></i> ${escapeHtml(att.name)}
+                                    </span>
+                                    ${att.size ? `<span class="chat-att-size">${escapeHtml(att.size)}</span>` : ''}
+                                    <a href="${escapeHtml(att.url)}" download="${escapeHtml(att.name)}" class="chat-att-dl" title="Unduh gambar"><i class="fa-solid fa-download"></i></a>
+                                </div>
+                            </div>
+                        `;
+                    } else if (isVid) {
+                        bubbleHtml += `
+                            <div class="chat-att-card">
+                                <video src="${escapeHtml(att.url)}" class="chat-player-video" controls preload="metadata"></video>
+                                <div class="chat-att-meta">
+                                    <span class="chat-att-name" title="${escapeHtml(att.name)}">
+                                        <i class="fa-solid fa-video"></i> ${escapeHtml(att.name)}
+                                    </span>
+                                    ${att.size ? `<span class="chat-att-size">${escapeHtml(att.size)}</span>` : ''}
+                                    <a href="${escapeHtml(att.url)}" download="${escapeHtml(att.name)}" class="chat-att-dl" title="Unduh video"><i class="fa-solid fa-download"></i></a>
+                                </div>
+                            </div>
+                        `;
+                    } else {
+                        let docClass = 'default';
+                        let docIcon = 'fa-file-lines';
+                        if (ext === 'pdf') { docClass = 'pdf'; docIcon = 'fa-file-pdf'; }
+                        else if (['doc', 'docx'].includes(ext)) { docClass = 'word'; docIcon = 'fa-file-word'; }
+                        else if (['xls', 'xlsx', 'csv'].includes(ext)) { docClass = 'excel'; docIcon = 'fa-file-excel'; }
+                        else if (['ppt', 'pptx'].includes(ext)) { docClass = 'powerpoint'; docIcon = 'fa-file-powerpoint'; }
+                        else if (ext === 'txt') { docClass = 'text'; docIcon = 'fa-file-lines'; }
+
+                        bubbleHtml += `
+                            <div class="chat-att-doc">
+                                <div class="chat-doc-icon ${docClass}">
+                                    <i class="fa-solid ${docIcon}"></i>
+                                </div>
+                                <div class="chat-doc-info">
+                                    <span class="chat-doc-title" title="${escapeHtml(att.name)}">${escapeHtml(att.name)}</span>
+                                    <span class="chat-doc-sub">${escapeHtml(ext.toUpperCase())}${att.size ? ' · ' + escapeHtml(att.size) : ''}</span>
+                                </div>
+                                <div class="chat-doc-actions">
+                                    <a href="${escapeHtml(att.url)}" target="_blank" rel="noopener noreferrer" class="btn-chat-doc" title="Buka berkas di tab baru">
+                                        <i class="fa-solid fa-arrow-up-right-from-square"></i> Buka
+                                    </a>
+                                    <a href="${escapeHtml(att.url)}" download="${escapeHtml(att.name)}" class="btn-chat-doc" title="Unduh berkas">
+                                        <i class="fa-solid fa-download"></i>
+                                    </a>
+                                </div>
+                            </div>
+                        `;
+                    }
+                });
+                bubbleHtml += `</div>`;
+            }
+
+            bubbleHtml += `</div>`;
+
+            // Metadata waktu
+            const timeMetaHtml = `<span class="chat-time-meta" style="margin-top:2px">${escapeHtml(msg.time || '')}</span>`;
+
+            msgEl.innerHTML = senderHtml + bubbleHtml + timeMetaHtml;
+            messagesList.appendChild(msgEl);
+        });
+    }
+
+    // Format teks pesan (URL menjadi link & ganti baris)
+    function formatChatMessageText(text) {
+        if (!text) return '';
+        const escaped = escapeHtml(text);
+        const urlRegex = /(https?:\/\/[^\s]+)/g;
+        const linked = escaped.replace(urlRegex, url => {
+            return `<a href="${url}" target="_blank" rel="noopener noreferrer" style="color:inherit;text-decoration:underline">${url}</a>`;
+        });
+        return linked.replace(/\n/g, '<br>');
+    }
+
+    // Scroll chat ke bawah
+    function scrollChatToBottom(force = false) {
+        if (!messagesScroll) return;
+        const isNearBottom = messagesScroll.scrollHeight - messagesScroll.scrollTop - messagesScroll.clientHeight < 120;
+        if (force || isNearBottom) {
+            messagesScroll.scrollTop = messagesScroll.scrollHeight;
+        }
+    }
+
+    // Helper escape HTML
+    function escapeHtml(str) {
+        if (!str) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
+    }
+
+    // =====================================================================
+    // ATTACHMENT HANDLER (CHIPS, FILE PICKER, DRAG & DROP, CLIPBOARD PASTE)
+    // =====================================================================
+    function renderFileChips() {
+        if (!filePreviewWrap) return;
+        filePreviewWrap.innerHTML = '';
+        const files = agencyDT.files;
+
+        if (files.length === 0) {
+            filePreviewWrap.style.display = 'none';
+            if (fileCountHint) fileCountHint.textContent = '0 file';
+            return;
+        }
+
+        filePreviewWrap.style.display = 'flex';
+        if (fileCountHint) fileCountHint.textContent = `${files.length} file dipilih`;
+
+        Array.from(files).forEach((file, index) => {
+            const chip = document.createElement('div');
+            chip.className = 'admin-file-chip';
+
+            let iconClass = 'fa-file-lines';
+            if (file.type.startsWith('image/')) iconClass = 'fa-file-image';
+            else if (file.type.startsWith('video/')) iconClass = 'fa-file-video';
+            else if (file.type.includes('pdf')) iconClass = 'fa-file-pdf';
+            else if (file.type.includes('word') || file.name.match(/\.(docx?)$/i)) iconClass = 'fa-file-word';
+            else if (file.type.includes('sheet') || file.type.includes('excel') || file.name.match(/\.(xlsx?|csv)$/i)) iconClass = 'fa-file-excel';
+            else if (file.type.includes('presentation') || file.name.match(/\.(pptx?)$/i)) iconClass = 'fa-file-powerpoint';
+
+            const sizeFormatted = file.size >= 1048576 ? (file.size / 1048576).toFixed(1) + ' MB' : (file.size / 1024).toFixed(0) + ' KB';
+
+            chip.innerHTML = `
+                <i class="fa-solid ${iconClass}" style="color:#5b8121"></i>
+                <span title="${escapeHtml(file.name)}">${escapeHtml(file.name)} (${sizeFormatted})</span>
+                <button type="button" data-index="${index}" title="Hapus file">&times;</button>
+            `;
+
+            chip.querySelector('button').addEventListener('click', e => {
+                e.stopPropagation();
+                removeFileFromAgencyDT(index);
+            });
+
+            filePreviewWrap.appendChild(chip);
+        });
+    }
+
+    function removeFileFromAgencyDT(index) {
+        const newDT = new DataTransfer();
+        Array.from(agencyDT.files).forEach((file, i) => {
+            if (i !== index) newDT.items.add(file);
+        });
+        agencyDT = newDT;
+        if (chatFilesInput) chatFilesInput.files = agencyDT.files;
+        renderFileChips();
+    }
+
+    function addFilesToAgencyDT(fileList) {
+        const maxFiles = 5;
+        const currentCount = agencyDT.files.length;
+        Array.from(fileList).forEach(file => {
+            if (agencyDT.files.length < maxFiles) {
+                // Hindari duplikasi file dengan nama dan ukuran sama persis
+                const alreadyExists = Array.from(agencyDT.files).some(f => f.name === file.name && f.size === file.size);
+                if (!alreadyExists) {
+                    agencyDT.items.add(file);
+                }
+            } else {
+                alert('Maksimal 5 file lampiran dalam satu pesan.');
+            }
+        });
+        if (chatFilesInput) chatFilesInput.files = agencyDT.files;
+        renderFileChips();
+    }
+
+    // Input file picker
+    if (chatFilesInput) {
+        chatFilesInput.addEventListener('change', function() {
+            if (this.files) {
+                addFilesToAgencyDT(this.files);
+            }
+        });
+    }
+
+    // Clipboard Paste (Ctrl+V) Screenshot atau File
+    if (chatInput) {
+        chatInput.addEventListener('paste', function(e) {
+            const items = (e.clipboardData || e.originalEvent.clipboardData)?.items;
+            if (!items) return;
+            const pastedFiles = [];
+            for (let i = 0; i < items.length; i++) {
+                if (items[i].kind === 'file') {
+                    const blob = items[i].getAsFile();
+                    if (blob) {
+                        const filename = blob.name || ('screenshot-' + Date.now() + '.png');
+                        const file = new File([blob], filename, { type: blob.type });
+                        pastedFiles.push(file);
+                    }
+                }
+            }
+            if (pastedFiles.length > 0) {
+                e.preventDefault();
+                addFilesToAgencyDT(pastedFiles);
+            }
+        });
+
+        // Enter kirim, Shift+Enter baris baru
+        chatInput.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                submitChatForm();
+            }
+        });
+    }
+
+    // Drag & Drop File ke area panel chat
+    if (chatPanel) {
+        chatPanel.addEventListener('dragover', function(e) {
+            e.preventDefault();
+            chatPanel.style.borderColor = '#5b8121';
+        });
+        chatPanel.addEventListener('dragleave', function() {
+            chatPanel.style.borderColor = 'var(--line)';
+        });
+        chatPanel.addEventListener('drop', function(e) {
+            e.preventDefault();
+            chatPanel.style.borderColor = 'var(--line)';
+            if (e.dataTransfer && e.dataTransfer.files) {
+                addFilesToAgencyDT(e.dataTransfer.files);
+            }
+        });
+    }
+
+    // Submit Pesan
+    function submitChatForm() {
+        if (isSending) return;
+        const textVal = chatInput ? chatInput.value.trim() : '';
+        const filesCount = agencyDT.files.length;
+
+        if (textVal === '' && filesCount === 0) {
+            if (chatInput) chatInput.focus();
+            return;
+        }
+
+        isSending = true;
+        if (btnSend) {
+            btnSend.disabled = true;
+            btnSend.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i>';
+        }
+
+        const formData = new FormData();
+        formData.append('action', 'send_message');
+        formData.append('room_id', currentRoomId);
+        formData.append('message', textVal);
+
+        Array.from(agencyDT.files).forEach(file => {
+            formData.append('chat_files[]', file);
+        });
+
+        fetch('admin_chat_api.php', {
+            method: 'POST',
+            body: formData
+        })
+        .then(res => res.json())
+        .then(data => {
+            isSending = false;
+            if (btnSend) {
+                btnSend.disabled = false;
+                btnSend.innerHTML = '<i class="fa-solid fa-paper-plane"></i> <span>Kirim</span>';
+            }
+
+            if (!data.success) {
+                alert(data.error || 'Gagal mengirim pesan.');
+                return;
+            }
+
+            // Bersihkan input
+            if (chatInput) {
+                chatInput.value = '';
+                chatInput.style.height = 'auto';
+            }
+            agencyDT = new DataTransfer();
+            if (chatFilesInput) chatFilesInput.files = agencyDT.files;
+            renderFileChips();
+
+            // Tambahkan pesan yang baru dikirim ke tampilan
+            if (data.data) {
+                lastMsgId = Math.max(lastMsgId, data.data.id || 0);
+                renderMessages([data.data], true);
+                scrollChatToBottom(true);
+            }
+
+            if (chatInput) chatInput.focus();
+        })
+        .catch(err => {
+            isSending = false;
+            if (btnSend) {
+                btnSend.disabled = false;
+                btnSend.innerHTML = '<i class="fa-solid fa-paper-plane"></i> <span>Kirim</span>';
+            }
+            console.error('Send Error:', err);
+            alert('Terjadi kesalahan jaringan saat mengirim pesan.');
+        });
+    }
+
+    if (chatForm) {
+        chatForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            submitChatForm();
+        });
+    }
+
+    // Event Listener Tombol Navigasi & Action
+    if (btnDockToggle) {
+        btnDockToggle.addEventListener('click', () => toggleChat());
+    }
+    if (btnTopbarOpen) {
+        btnTopbarOpen.addEventListener('click', () => toggleChat(true));
+    }
+    if (btnSideOpen) {
+        btnSideOpen.addEventListener('click', () => toggleChat(true));
+    }
+    if (btnClose) {
+        btnClose.addEventListener('click', () => toggleChat(false));
+    }
+    if (btnRefresh) {
+        btnRefresh.addEventListener('click', () => {
+            btnRefresh.classList.add('fa-spin');
+            loadRoomMessages(currentRoomId);
+            setTimeout(() => btnRefresh.classList.remove('fa-spin'), 600);
+        });
+    }
+    if (btnExpand) {
+        btnExpand.addEventListener('click', () => {
+            isExpanded = !isExpanded;
+            chatPanel.classList.toggle('expanded', isExpanded);
+            btnExpand.innerHTML = isExpanded ? '<i class="fa-solid fa-compress"></i>' : '<i class="fa-solid fa-expand"></i>';
+            btnExpand.title = isExpanded ? 'Kecilkan Jendela' : 'Perbesar Jendela';
+            scrollChatToBottom(false);
+        });
+    }
+    if (btnAudio) {
+        btnAudio.addEventListener('click', () => {
+            soundEnabled = !soundEnabled;
+            btnAudio.classList.toggle('active', soundEnabled);
+            btnAudio.innerHTML = soundEnabled ? '<i class="fa-solid fa-volume-high"></i>' : '<i class="fa-solid fa-volume-xmark"></i>';
+            btnAudio.title = soundEnabled ? 'Suara Notifikasi: Aktif' : 'Suara Notifikasi: Mati';
+        });
+    }
+    if (tabGeneral) {
+        tabGeneral.addEventListener('click', () => switchRoom('general'));
+    }
+
+    // Jalankan polling awal
+    restartPolling(8000);
+})();
+
+// ==========================================
+// SIDEBAR NAVIGATION LIVE SEARCH FILTER
+// ==========================================
+(function() {
+    const searchInput = document.getElementById('sidebarNavSearch');
+    const clearBtn = document.getElementById('sidebarSearchClear');
+    const emptyState = document.getElementById('sideNavEmpty');
+    const navGroups = document.querySelectorAll('.side-nav-group');
+    const navLinks = document.querySelectorAll('#sidebarNav .side-link');
+
+    if (!searchInput) return;
+
+    function filterMenu() {
+        const query = searchInput.value.trim().toLowerCase();
+        
+        if (clearBtn) {
+            clearBtn.style.display = query ? 'inline-flex' : 'none';
+        }
+
+        if (!query) {
+            navGroups.forEach(group => group.style.display = '');
+            navLinks.forEach(link => link.style.display = '');
+            if (emptyState) emptyState.style.display = 'none';
+            return;
+        }
+
+        let totalVisible = 0;
+
+        navGroups.forEach(group => {
+            const links = group.querySelectorAll('.side-link');
+            let groupVisible = 0;
+
+            links.forEach(link => {
+                const text = (link.textContent || '').toLowerCase();
+                const terms = (link.getAttribute('data-search-terms') || '').toLowerCase();
+                if (text.includes(query) || terms.includes(query)) {
+                    link.style.display = '';
+                    groupVisible++;
+                } else {
+                    link.style.display = 'none';
+                }
+            });
+
+            if (groupVisible > 0) {
+                group.style.display = '';
+                totalVisible += groupVisible;
+            } else {
+                group.style.display = 'none';
+            }
+        });
+
+        if (emptyState) {
+            emptyState.style.display = (totalVisible === 0) ? 'block' : 'none';
+        }
+    }
+
+    searchInput.addEventListener('input', filterMenu);
+
+    if (clearBtn) {
+        clearBtn.addEventListener('click', function() {
+            searchInput.value = '';
+            filterMenu();
+            searchInput.focus();
+        });
+    }
+
+    searchInput.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            searchInput.value = '';
+            filterMenu();
+            searchInput.blur();
+        } else if (e.key === 'Enter') {
+            e.preventDefault();
+            const firstVisible = Array.from(navLinks).find(link => link.style.display !== 'none');
+            if (firstVisible) {
+                firstVisible.click();
+            }
+        }
+    });
+})();
 </script>
 </body>
 </html>

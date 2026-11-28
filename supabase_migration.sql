@@ -645,6 +645,24 @@ ALTER TABLE public."consultation_messages" ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Allow full access for service_role and authenticated" ON public."consultation_messages";
 CREATE POLICY "Allow full access for service_role and authenticated" ON public."consultation_messages" FOR ALL USING (true) WITH CHECK (true);
 
+-- --------------------------------------------------------------------------
+-- 4. Table: agency_chat_messages (Internal Agency Team & Direct Chat)
+-- --------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public."agency_chat_messages" (
+    "id" SERIAL PRIMARY KEY,
+    "room_type" VARCHAR(30) NOT NULL DEFAULT 'team',
+    "room_id" VARCHAR(50) NOT NULL DEFAULT 'general',
+    "sender_id" INT NOT NULL,
+    "sender_name" VARCHAR(100) NOT NULL,
+    "recipient_id" INT NULL,
+    "message" TEXT NOT NULL,
+    "created_at" TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
+ALTER TABLE public."agency_chat_messages" ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Allow full access for service_role and authenticated" ON public."agency_chat_messages";
+CREATE POLICY "Allow full access for service_role and authenticated" ON public."agency_chat_messages" FOR ALL USING (true) WITH CHECK (true);
+
 COMMIT;
 
 -- Grant full privileges to all roles (mencegah error permission denied pada Supabase)

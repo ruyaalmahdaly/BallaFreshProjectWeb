@@ -101,7 +101,15 @@ if (!empty($pgPass) && extension_loaded('pdo_pgsql')) {
     }
 }
 
-// 3. Fallback ke MariaDB / MySQL Lokal (Saat dijalankan di komputer / XAMPP lokal)
+// 3. Hubungkan ke Supabase REST API jika direct PostgreSQL belum terhubung tetapi SUPABASE_URL & keys tersedia
+// (Supabase diprioritaskan penuh baik di cloud maupun di server lokal XAMPP)
+if ($conn === null && !empty(SUPABASE_URL) && (!empty(SUPABASE_SECRET_KEY) || !empty(SUPABASE_PUBLISHABLE_KEY))) {
+    $conn = new SupabaseRestAdapter();
+    $connectedToSupabase = true;
+    $supabaseError = null;
+}
+
+// 4. Fallback ke MariaDB / MySQL Lokal (hanya jika Supabase belum terhubung atau sedang offline)
 if ($conn === null && !$isVercel) {
     mysqli_report(MYSQLI_REPORT_OFF);
 
@@ -130,17 +138,11 @@ if ($conn === null && !$isVercel) {
     }
 }
 
-// 4. Fallback ke Supabase REST API jika direct PostgreSQL belum terhubung tetapi SUPABASE_URL & keys tersedia
-if ($conn === null && !empty(SUPABASE_URL) && (!empty(SUPABASE_SECRET_KEY) || !empty(SUPABASE_PUBLISHABLE_KEY))) {
-    $conn = new SupabaseRestAdapter();
-    $connectedToSupabase = true;
-    $supabaseError = null;
-}
-
-// 5. Jika di Vercel dan seluruh koneksi belum terhubung, siapkan safe adapter agar API tidak 500
+// 5. Jika seluruh koneksi belum terhubung, siapkan safe adapter agar API tidak 500
 if ($conn === null) {
     if (!empty(SUPABASE_URL)) {
         $conn = new SupabaseRestAdapter();
+        $connectedToSupabase = true;
     }
 }
 ?>

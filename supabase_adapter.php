@@ -489,6 +489,10 @@ class SupabaseRestStmtAdapter {
                     $queryParams[] = 'order_number=eq.' . rawurlencode((string)($execParams[0] ?? ''));
                 } elseif (preg_match('/user_id\s*=\s*\?/i', $where)) {
                     $queryParams[] = 'user_id=eq.' . (int)($execParams[0] ?? 0);
+                } elseif (preg_match('/room_id\s*=\s*\?/i', $where)) {
+                    $queryParams[] = 'room_id=eq.' . rawurlencode((string)($execParams[0] ?? ''));
+                } elseif (preg_match('/consultation_id\s*=\s*\?/i', $where)) {
+                    $queryParams[] = 'consultation_id=eq.' . (int)($execParams[0] ?? 0);
                 }
             }
 
